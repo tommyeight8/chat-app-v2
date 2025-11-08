@@ -1,17 +1,17 @@
 import express from "express";
+import { signUpController } from "../controllers/authController.js";
 
 const router = express.Router();
 
-router.get("/signup", (req, res) => {
-  res.send("You are signing up");
-});
+router.post("/signup", signUpController);
 
 router.get("/login", (req, res) => {
   res.send("You are signing in!");
 });
 
-router.get("/logout", (req, res) => {
-  res.send("Sign out");
+router.post("/logout", (req, res) => {
+  res.cookie("jwt", "", { httpOnly: true, expires: new Date(0) });
+  res.status(200).json({ message: "Logged out successfully" });
 });
 
 export default router;
