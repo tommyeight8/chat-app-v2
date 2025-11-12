@@ -3,15 +3,28 @@ import { isSpoofedBot } from "@arcjet/inspect";
 export const createRateLimitMiddleware = (arcjetInstance) => {
   return async (req, res, next) => {
     try {
-      // Use user ID if authenticated, otherwise use IP
-      const identifier = req.user?.id || req.ip;
+      // Get the real client IP (trust proxy or forwarded header)
+      const clientIp =
+        req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip;
 
+      // Use user ID if authenticated, otherwise fallback to IP
+      const identifier = req.user?.id || clientIp;
+
+      // ✅ Explicitly tell Arcjet the correct IP
       const decision = await arcjetInstance.protect(req, {
+        ip: clientIp, // <-- The missing piece
         userId: identifier,
         requested: 1,
       });
 
-      console.log("Arcjet decision:", decision.conclusion);
+      console.log(
+        "Arcjet decision:",
+        decision.conclusion,
+        "| IP:",
+        clientIp,
+        "| isHosting:",
+        decision.ip?.isHosting()
+      );
 
       // Check if request is denied
       if (decision.isDenied()) {
@@ -33,23 +46,23 @@ export const createRateLimitMiddleware = (arcjetInstance) => {
         });
       }
 
-      // Check for hosting IPs (VPN, proxies, cloud providers)
-      // These are often used by bots or malicious actors
-      if (decision.ip.isHosting()) {
+      // ✅ Check for hosting IPs (VPNs, proxies, cloud providers)
+      // Only block in production, never in dev/testing
+      if (process.env.ARCJET_ENV === "production" && decision.ip.isHosting()) {
+        console.log("❌ Denied due to hosting IP:", clientIp);
         return res.status(403).json({
           error: "Requests from hosting providers are not allowed",
         });
       }
 
       // Check for spoofed bots (paid Arcjet feature)
-      // Verifies if a bot is legitimate using IP data
       if (decision.results.some(isSpoofedBot)) {
         return res.status(403).json({
           error: "Bot verification failed",
         });
       }
 
-      // Request is allowed
+      // ✅ Request is allowed
       next();
     } catch (error) {
       console.error("❌ Arcjet error:", error.message);
