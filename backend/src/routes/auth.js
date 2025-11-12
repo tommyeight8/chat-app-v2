@@ -7,19 +7,27 @@ import {
 } from "../controllers/authController.js";
 import { protect } from "../../middleware/authMiddleware.js";
 import { upload } from "../../middleware/multer.js";
+import { createRateLimitMiddleware } from "../../middleware/rateLimitMiddleware.js";
+import { ajAuth, ajProfile } from "../lib/arcjet.js";
 
 const router = express.Router();
 
-router.post("/signup", signUpController);
+// Create middleware instances
+const authRateLimit = createRateLimitMiddleware(ajAuth);
+const profileRateLimit = createRateLimitMiddleware(ajProfile);
 
-router.post("/login", login);
-
+// Public routes with strict protection
+router.post("/signup", authRateLimit, signUpController);
+router.post("/login", authRateLimit, login);
 router.post("/logout", logout);
 
-router.put("/update-profile", protect, upload.single("avatar"), updateProfile);
-
-router.get("/check", protect, (req, res) => {
-  res.status(200).json(req.user);
-});
+// Protected routes
+router.put(
+  "/update-profile",
+  protect,
+  profileRateLimit,
+  upload.single("avatar"),
+  updateProfile
+);
 
 export default router;
