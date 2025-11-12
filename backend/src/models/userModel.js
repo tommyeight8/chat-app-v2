@@ -4,11 +4,9 @@ const userSchema = new mongoose.Schema(
   {
     fullname: { type: String, required: true },
     email: { type: String, required: true, unique: true },
-    password: { type: String, required: true, minlength: 6 },
-    profilePic: {
-      type: String,
-      default: "",
-    },
+    password: { type: String, required: true },
+    avatar: { type: String, default: "" }, // Cloudinary URL
+    avatarPublicId: { type: String, default: "" }, // For deletion
   },
   { timestamps: true }
 );

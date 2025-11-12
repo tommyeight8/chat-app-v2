@@ -2,6 +2,10 @@ import User from "../models/userModel.js";
 import bcrypt from "bcryptjs";
 import { generateToken } from "../utils/generateToken.js";
 import { sendWelcomeEmail } from "../utils/sendWelcomeEmail.js";
+import {
+  uploadToCloudinary,
+  deleteFromCloudinary,
+} from "../utils/uploadToCloudinary.js";
 
 export const signUpController = async (req, res) => {
   try {
@@ -101,4 +105,91 @@ export const login = async (req, res) => {
 export const logout = (req, res) => {
   res.cookie("jwt", "", { httpOnly: true, expires: new Date(0) });
   res.status(200).json({ message: "Logged out successfully" });
+};
+
+export const updateProfile = async (req, res) => {
+  try {
+    let { fullname, email, password, currentPassword } = req.body;
+
+    const userId = req.user._id;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Handle avatar upload
+    if (req.file) {
+      try {
+        // Delete old avatar from Cloudinary if exists
+        if (user.avatarPublicId) {
+          await deleteFromCloudinary(user.avatarPublicId);
+        }
+
+        // Upload new avatar
+        const result = await uploadToCloudinary(req.file.buffer, "avatars");
+        user.avatar = result.secure_url;
+        user.avatarPublicId = result.public_id;
+      } catch (error) {
+        console.error("Avatar upload error:", error);
+        return res.status(500).json({ message: "Failed to upload avatar" });
+      }
+    }
+
+    // Update email if provided
+    if (email) {
+      email = email.trim().toLowerCase();
+
+      if (email !== user.email) {
+        const existingUser = await User.findOne({ email });
+        if (existingUser) {
+          return res.status(400).json({ message: "Email already in use" });
+        }
+        user.email = email;
+      }
+    }
+
+    // Update fullname if provided
+    if (fullname) {
+      user.fullname = fullname.trim();
+    }
+
+    // Update password if provided
+    if (password) {
+      if (!currentPassword) {
+        return res.status(400).json({
+          message: "Current password is required to set a new password",
+        });
+      }
+
+      const isCurrentPasswordValid = await bcrypt.compare(
+        currentPassword,
+        user.password
+      );
+
+      if (!isCurrentPasswordValid) {
+        return res
+          .status(401)
+          .json({ message: "Current password is incorrect" });
+      }
+
+      user.password = await bcrypt.hash(password, 10);
+    }
+
+    await user.save();
+
+    res.status(200).json({
+      success: true,
+      message: "Profile updated successfully",
+      user: {
+        id: user._id,
+        fullname: user.fullname,
+        email: user.email,
+        avatar: user.avatar,
+      },
+    });
+  } catch (error) {
+    console.error("❌ Update profile error:", error.message);
+    res.status(500).json({ message: "Internal server error" });
+  }
 };
