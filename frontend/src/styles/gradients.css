@@ -1,0 +1,115 @@
+/* frontend/src/styles/gradients.css */
+/* LCH Color Space Gradients - Smoother, more vibrant */
+
+/* Main gradient: violet -> slate -> teal */
+.gradient-violet-slate-teal {
+  background: linear-gradient(
+    to bottom right,
+    lch(50% 80 310),
+    /* Violet-600 equivalent */ lch(35% 20 270) 50%,
+    /* Slate-800 equivalent */ lch(55% 50 190) /* Teal-700 equivalent */
+  );
+}
+
+/* Alternative with better color stops */
+.gradient-violet-slate-teal-smooth {
+  background: linear-gradient(
+    135deg,
+    lch(48% 75 305) 0%,
+    lch(38% 25 275) 45%,
+    lch(32% 18 270) 55%,
+    lch(52% 48 185) 100%
+  );
+}
+
+/* Lighter version for backgrounds */
+.gradient-violet-slate-teal-light {
+  background: linear-gradient(
+    to bottom right,
+    lch(65% 60 310),
+    lch(55% 15 270) 50%,
+    lch(70% 40 190)
+  );
+}
+
+/* Dark version for dramatic effect */
+.gradient-violet-slate-teal-dark {
+  background: linear-gradient(
+    to bottom right,
+    lch(40% 85 310),
+    lch(25% 25 270) 50%,
+    lch(45% 55 190)
+  );
+}
+
+/* Animated gradient (smooth color shift) */
+.gradient-violet-slate-teal-animated {
+  background: linear-gradient(
+    -45deg,
+    lch(50% 80 310),
+    lch(35% 20 270),
+    lch(55% 50 190),
+    lch(50% 80 310)
+  );
+  background-size: 400% 400%;
+  animation: gradientShift 15s ease infinite;
+}
+
+@keyframes gradientShift {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* With transparency for glass effects */
+.gradient-violet-slate-teal-glass {
+  background: linear-gradient(
+    to bottom right,
+    lch(50% 80 310 / 0.8),
+    lch(35% 20 270 / 0.6) 50%,
+    lch(55% 50 190 / 0.8)
+  );
+}
+
+/* Radial gradient variant */
+.gradient-violet-slate-teal-radial {
+  background: radial-gradient(
+    ellipse at top left,
+    lch(50% 80 310),
+    lch(35% 20 270) 40%,
+    lch(55% 50 190)
+  );
+}
+
+/* Mesh gradient (more complex, smoother) */
+.gradient-violet-slate-teal-mesh {
+  background: radial-gradient(at 40% 20%, lch(50% 80 310) 0px, transparent 50%),
+    radial-gradient(at 80% 0%, lch(48% 70 300) 0px, transparent 50%),
+    radial-gradient(at 0% 50%, lch(35% 20 270) 0px, transparent 50%),
+    radial-gradient(at 80% 50%, lch(45% 35 190) 0px, transparent 50%),
+    radial-gradient(at 0% 100%, lch(40% 45 280) 0px, transparent 50%),
+    radial-gradient(at 80% 100%, lch(55% 50 190) 0px, transparent 50%),
+    lch(35% 20 270);
+}
+
+/* Fallback for browsers that don't support LCH */
+@supports not (color: lch(50% 50 50)) {
+  .gradient-violet-slate-teal,
+  .gradient-violet-slate-teal-smooth {
+    background: linear-gradient(to bottom right, #7c3aed, #1e293b 50%, #0f766e);
+  }
+
+  .gradient-violet-slate-teal-light {
+    background: linear-gradient(to bottom right, #a78bfa, #475569 50%, #14b8a6);
+  }
+
+  .gradient-violet-slate-teal-dark {
+    background: linear-gradient(to bottom right, #6d28d9, #0f172a 50%, #115e59);
+  }
+}

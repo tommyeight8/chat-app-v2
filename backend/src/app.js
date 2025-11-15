@@ -1,4 +1,8 @@
+// backend/server.js (UPDATED WITH SOCKET.IO)
+// Replace your existing server.js with this
+
 import express from "express";
+import { createServer } from "http"; // ← Add this for Socket.io
 import cookieParser from "cookie-parser";
 import dotenv from "dotenv";
 import path from "path";
@@ -7,10 +11,13 @@ import authRoutes from "./routes/auth.js";
 import messageRoutes from "./routes/message.js";
 import { connectDB } from "./lib/db.js";
 import { ENV } from "./lib/env.js";
+import { initializeSocket } from "./socket/socketHandler.js"; // ← Add this
 
 dotenv.config();
 
 const app = express();
+const httpServer = createServer(app); // ← Create HTTP server for Socket.io
+
 app.set("trust proxy", true); // ✅ Fix Arcjet seeing proxy IPs
 
 const __dirname = path.resolve();
@@ -29,6 +36,10 @@ app.use((req, res, next) => {
   next();
 });
 
+// Initialize Socket.io
+initializeSocket(httpServer); // ← Add this
+console.log("✅ Socket.io initialized");
+
 // API Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/messages", messageRoutes);
@@ -45,7 +56,9 @@ if (ENV.NODE_ENV === "production") {
   });
 }
 
-app.listen(PORT, () => {
+// ✅ Use httpServer.listen instead of app.listen
+httpServer.listen(PORT, () => {
   console.log(`✅ Server running on port ${PORT}`);
+  console.log(`🚀 Socket.io ready for connections`);
   connectDB();
 });
