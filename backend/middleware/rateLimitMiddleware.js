@@ -9,6 +9,11 @@ import { isSpoofedBot } from "@arcjet/inspect";
 export const createRateLimitMiddleware = (arcjetInstance) => {
   return async (req, res, next) => {
     try {
+      // Skip Arcjet in development
+      if (process.env.NODE_ENV === "development") {
+        return next();
+      }
+
       // ✅ Get the real client IP (handle proxies & Cloudflare)
       const clientIp =
         req.headers["x-forwarded-for"]?.split(",")[0]?.trim() || req.ip;
