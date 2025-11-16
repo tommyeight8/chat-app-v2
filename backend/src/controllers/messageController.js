@@ -2,11 +2,14 @@
 import { uploadToCloudinary } from "../utils/uploadToCloudinary.js";
 import Message from "../models/messageModel.js";
 import User from "../models/userModel.js";
-import DOMPurify from "isomorphic-dompurify";
+import sanitizeHtml from "sanitize-html";
+
 import { body, param, query, validationResult } from "express-validator";
 import { PAGINATION } from "../config/constant.js";
 
-// ✅ VALIDATION MIDDLEWARE
+// ==========================
+// VALIDATION MIDDLEWARE
+// ==========================
 export const validateSendMessage = [
   body("receiverId").isMongoId().withMessage("Invalid receiver ID"),
   body("text")
@@ -25,31 +28,32 @@ export const validateGetMessages = [
     .withMessage("Limit must be 1-100"),
 ];
 
-// ✅ SANITIZE INPUT
+// ==========================
+// SANITIZATION
+// ==========================
 const sanitizeText = (text) => {
-  if (!text) return "";
+  if (!text || typeof text !== "string") return "";
 
-  // Remove all HTML tags
-  const cleaned = DOMPurify.sanitize(text, {
-    ALLOWED_TAGS: [],
-    ALLOWED_ATTR: [],
-  });
-
-  // Trim and truncate
-  return cleaned.trim().substring(0, 5000);
+  return sanitizeHtml(text, {
+    allowedTags: [],
+    allowedAttributes: {},
+  })
+    .trim()
+    .substring(0, 5000);
 };
 
-// GET /api/messages/contacts
+// ==========================
+// GET ALL CONTACTS
+// ==========================
 export const getAllContacts = async (req, res) => {
   try {
     const myId = req.user._id;
 
-    // ✅ Add limit to prevent huge queries
     const contacts = await User.find({ _id: { $ne: myId } })
       .select("fullname email avatar")
       .sort({ fullname: 1 })
-      .limit(500) // ✅ Prevent loading 10k+ users
-      .lean(); // ✅ Return plain objects (faster)
+      .limit(500)
+      .lean();
 
     res.status(200).json({
       success: true,
@@ -57,7 +61,6 @@ export const getAllContacts = async (req, res) => {
     });
   } catch (error) {
     console.error("❌ Get contacts error:", error);
-    // ✅ Don't leak error details
     res.status(500).json({
       success: false,
       message: "Failed to load contacts",
@@ -65,7 +68,9 @@ export const getAllContacts = async (req, res) => {
   }
 };
 
-// GET /api/messages/chats
+// ==========================
+// GET CHAT PARTNERS
+// ==========================
 export const getChatPartners = async (req, res) => {
   try {
     const myId = req.user._id;
@@ -109,15 +114,9 @@ export const getChatPartners = async (req, res) => {
           as: "user",
         },
       },
-      {
-        $unwind: "$user",
-      },
-      {
-        $sort: { "lastMessage.createdAt": -1 },
-      },
-      {
-        $limit: 100, // ✅ Limit chat list
-      },
+      { $unwind: "$user" },
+      { $sort: { "lastMessage.createdAt": -1 } },
+      { $limit: 100 },
       {
         $project: {
           _id: 1,
@@ -151,7 +150,9 @@ export const getChatPartners = async (req, res) => {
   }
 };
 
-// ✅ GET /api/messages/:id - WITH PAGINATION
+// ==========================
+// GET MESSAGES WITH PAGINATION
+// ==========================
 export const getMessages = async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -163,7 +164,6 @@ export const getMessages = async (req, res) => {
     }
 
     const { id: otherUserId } = req.params;
-    // ✅ Use constant as default
     const { before, limit = PAGINATION.MESSAGES_PER_PAGE } = req.query;
     const myId = req.user._id;
 
@@ -189,13 +189,14 @@ export const getMessages = async (req, res) => {
       query.createdAt = { $lt: new Date(before) };
     }
 
-    const limitNum = parseInt(limit) || PAGINATION.MESSAGES_PER_PAGE; // ✅ Fallback to constant
+    const limitNum = parseInt(limit) || PAGINATION.MESSAGES_PER_PAGE;
 
     const messages = await Message.find(query)
       .sort({ createdAt: -1 })
       .limit(limitNum)
       .lean();
 
+    // Mark as read
     Message.updateMany(
       {
         senderId: otherUserId,
@@ -221,10 +222,11 @@ export const getMessages = async (req, res) => {
   }
 };
 
-// ✅ SEND MESSAGE - VALIDATED & SANITIZED
+// ==========================
+// SEND TEXT MESSAGE
+// ==========================
 export const sendMessage = async (req, res) => {
   try {
-    // ✅ Validate inputs
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({
@@ -243,7 +245,6 @@ export const sendMessage = async (req, res) => {
       });
     }
 
-    // Verify receiver exists
     const receiver = await User.findById(receiverId).lean();
     if (!receiver) {
       return res.status(404).json({
@@ -252,7 +253,6 @@ export const sendMessage = async (req, res) => {
       });
     }
 
-    // ✅ Sanitize text
     const sanitizedText = sanitizeText(text);
 
     const message = await Message.create({
@@ -275,7 +275,9 @@ export const sendMessage = async (req, res) => {
   }
 };
 
-// ✅ SEND IMAGE - WITH VALIDATION
+// ==========================
+// SEND IMAGE MESSAGE
+// ==========================
 export const sendImageMessage = async (req, res) => {
   try {
     const { receiverId } = req.body;
@@ -295,7 +297,6 @@ export const sendImageMessage = async (req, res) => {
       });
     }
 
-    // ✅ Validate file type by magic number (not just extension)
     const fileType = req.file.mimetype;
     const allowedTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
@@ -306,16 +307,13 @@ export const sendImageMessage = async (req, res) => {
       });
     }
 
-    // ✅ Validate file size (5MB max)
-    const maxSize = 5 * 1024 * 1024; // 5MB
-    if (req.file.size > maxSize) {
+    if (req.file.size > 5 * 1024 * 1024) {
       return res.status(400).json({
         success: false,
         message: "Image must be less than 5MB",
       });
     }
 
-    // Upload to Cloudinary
     const result = await uploadToCloudinary(req.file.buffer, "messages");
 
     const message = await Message.create({
@@ -339,6 +337,9 @@ export const sendImageMessage = async (req, res) => {
   }
 };
 
+// ==========================
+// GET CONVERSATIONS LIST
+// ==========================
 export const getConversations = async (req, res) => {
   try {
     const userId = req.user._id;
@@ -349,9 +350,7 @@ export const getConversations = async (req, res) => {
           $or: [{ senderId: userId }, { receiverId: userId }],
         },
       },
-      {
-        $sort: { createdAt: -1 },
-      },
+      { $sort: { createdAt: -1 } },
       {
         $group: {
           _id: {
@@ -368,12 +367,8 @@ export const getConversations = async (req, res) => {
           as: "userInfo",
         },
       },
-      {
-        $unwind: "$userInfo",
-      },
-      {
-        $limit: 100, // ✅ Limit results
-      },
+      { $unwind: "$userInfo" },
+      { $limit: 100 },
       {
         $project: {
           _id: 1,
