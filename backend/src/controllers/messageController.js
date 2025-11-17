@@ -7,6 +7,8 @@ import sanitizeHtml from "sanitize-html";
 import { body, param, query, validationResult } from "express-validator";
 import { PAGINATION } from "../config/constant.js";
 
+import { getIO } from "../socket/socketHandler.js";
+
 // ==========================
 // VALIDATION MIDDLEWARE
 // ==========================
@@ -262,6 +264,15 @@ export const sendMessage = async (req, res) => {
       read: false,
     });
 
+    // 🔥 NEW: broadcast via socket without creating again
+    const io = getIO();
+    if (io) {
+      io.to(receiverId.toString()).emit("new_message", {
+        message,
+        from: senderId.toString(),
+      });
+    }
+
     res.status(201).json({
       success: true,
       message,
@@ -294,6 +305,14 @@ export const sendImageMessage = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Image is required",
+      });
+    }
+
+    const io = getIO();
+    if (io) {
+      io.to(receiverId.toString()).emit("new_message", {
+        message,
+        from: senderId.toString(),
       });
     }
 

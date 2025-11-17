@@ -123,55 +123,9 @@ export const initializeSocket = (httpServer) => {
     // ==========================
     // SEND MESSAGE
     // ==========================
-    socket.on("send_message", async (data) => {
-      try {
-        if (!checkRateLimit(userId, "send_message", 10, 1000)) {
-          return socket.emit("message_error", {
-            tempId: data.tempId,
-            error: "Rate limit exceeded",
-          });
-        }
-
-        const { receiverId, text, image, tempId } = data;
-
-        if (!receiverId || !isValidMongoId(receiverId))
-          throw new Error("Invalid receiver ID");
-
-        if (!text && !image) throw new Error("Message must contain content");
-
-        const sanitized = sanitizeText(text);
-
-        if (image && typeof image !== "string")
-          throw new Error("Invalid image format");
-
-        const message = await Message.create({
-          senderId: userId,
-          receiverId,
-          text: sanitized,
-          image: image || null,
-          read: false,
-        });
-
-        // Send to receiver
-        io.to(receiverId).emit("new_message", {
-          message,
-          from: userId,
-        });
-
-        // Confirm delivery back to sender
-        socket.emit("message_sent", {
-          tempId,
-          message,
-        });
-      } catch (err) {
-        console.error("❌ Send message error:", err);
-        socket.emit("message_error", {
-          tempId: data.tempId,
-          error: err.message,
-        });
-      }
+    socket.on("send_message", () => {
+      console.log("⚠️ Socket message ignored — REST handles sending");
     });
-
     // ==========================
     // MARK READ
     // ==========================

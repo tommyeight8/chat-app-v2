@@ -264,7 +264,6 @@ export const MessageProvider = ({ children }) => {
   const sendMessage = useCallback(
     async (receiverId, text) => {
       try {
-        // optimistic
         const tempId = `temp-${Date.now()}-${Math.random()}`;
         const optimisticMessage = {
           _id: tempId,
@@ -277,21 +276,16 @@ export const MessageProvider = ({ children }) => {
 
         setMessages((prev) => [...prev, optimisticMessage]);
 
-        // backend API save
         const data = await messageAPI.sendMessage(receiverId, text);
 
-        // replace optimistic with real
+        // Replace optimistic with real message from REST
         setMessages((prev) =>
           prev.map((msg) => (msg._id === tempId ? data.message : msg))
         );
 
-        // emit socket event AFTER save
-        if (socketService.isConnected()) {
-          socketService.sendMessage(receiverId, text, null, data.message._id);
-        }
+        // 🚫 NO socketService.sendMessage here anymore
 
-        // ❌ REMOVED — socket will update chats automatically
-        // await loadChats();
+        await loadChats();
 
         return data.message;
       } catch (err) {
@@ -313,14 +307,7 @@ export const MessageProvider = ({ children }) => {
 
         setMessages((prev) => [...prev, data.message]);
 
-        if (socketService.isConnected()) {
-          socketService.sendMessage(
-            receiverId,
-            "",
-            data.message.image,
-            data.message._id
-          );
-        }
+        // 🚫 remove socketService.sendMessage here too
 
         await loadChats();
 

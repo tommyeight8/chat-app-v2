@@ -91,25 +91,8 @@ class SocketService {
   // ===== MESSAGE EVENTS =====
 
   // Send a message
-  sendMessage(receiverId, text, image = null, tempId = null) {
-    if (!this.socket?.connected) {
-      console.error("❌ Socket not connected");
-      throw new Error("Socket not connected");
-    }
-
-    console.log(`📤 Sending message:`, {
-      receiverId,
-      text: text?.substring(0, 50),
-      image: !!image,
-      tempId,
-    });
-
-    this.socket.emit("send_message", {
-      receiverId,
-      text,
-      image,
-      tempId,
-    });
+  sendMessage() {
+    console.warn("Socket sendMessage disabled — using REST API only.");
   }
 
   // Mark messages as read
