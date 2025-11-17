@@ -55,7 +55,7 @@ export const MessageProvider = ({ children }) => {
 
     socketService.onOnlineUsers((data) => {
       console.log("👥 Initial online users:", data.users);
-      setOnlineUsers(new Set(data.users));
+      setOnlineUsers(new Set(data.users.map(String)));
     });
 
     socketService.onNewMessage((data) => {
@@ -145,15 +145,13 @@ export const MessageProvider = ({ children }) => {
     });
 
     socketService.onUserOnline((data) => {
-      console.log("🟢 User came online:", data.userId);
-      setOnlineUsers((prev) => new Set([...prev, data.userId]));
+      setOnlineUsers((prev) => new Set([...prev, String(data.userId)]));
     });
 
     socketService.onUserOffline((data) => {
-      console.log("🔴 User went offline:", data.userId);
       setOnlineUsers((prev) => {
         const newSet = new Set(prev);
-        newSet.delete(data.userId);
+        newSet.delete(String(data.userId));
         return newSet;
       });
     });
@@ -356,9 +354,7 @@ export const MessageProvider = ({ children }) => {
   }, []);
 
   const isUserOnline = useCallback(
-    (userId) => {
-      return onlineUsers.has(userId);
-    },
+    (userId) => onlineUsers.has(String(userId)),
     [onlineUsers]
   );
 

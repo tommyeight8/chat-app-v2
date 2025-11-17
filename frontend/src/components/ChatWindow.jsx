@@ -251,14 +251,14 @@ const ChatWindow = () => {
             <MessageBubble
               key={message._id}
               message={message}
-              isOwnMessage={message.senderId === user?.id}
+              isOwnMessage={message.senderId === (user?._id || user?.id)}
               senderName={
-                message.senderId === user?.id
+                message.senderId === (user?._id || user?.id)
                   ? user?.fullname || "You"
                   : currentChat?.fullname || "Unknown"
               }
               senderAvatar={
-                message.senderId === user?.id
+                message.senderId === (user?._id || user?.id)
                   ? user?.avatar
                   : currentChat?.avatar
               }
