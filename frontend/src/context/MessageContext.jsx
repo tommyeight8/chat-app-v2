@@ -67,19 +67,28 @@ export const MessageProvider = ({ children }) => {
         isFromCurrentChat: currentChatRef.current?._id === from,
       });
 
+      // 🚫 IMPORTANT FIX — ignore your own message (prevents duplicates)
+      if (from === (user?._id || user?.id)) {
+        console.log(
+          "⚠️ Ignoring own message from socket to prevent duplicates"
+        );
+        return;
+      }
+
+      // If it's the active chat: append
       if (currentChatRef.current?._id === from) {
         setMessages((prev) => {
           if (prev.find((m) => m._id === message._id)) {
-            console.log("⚠️ Duplicate message, ignoring");
+            console.log("⚠️ Duplicate message ignored");
             return prev;
           }
-          console.log("✅ Adding message to current chat");
+          console.log("📥 Appending new incoming message");
           return [...prev, message];
         });
 
         socketService.markMessagesRead(from);
       } else {
-        console.log("📬 Message from other user, updating chat list");
+        console.log("📬 Message from other chat — updating chat list only");
       }
 
       loadChats();
@@ -255,7 +264,7 @@ export const MessageProvider = ({ children }) => {
   const sendMessage = useCallback(
     async (receiverId, text) => {
       try {
-        // 1. Optimistic temp message
+        // optimistic
         const tempId = `temp-${Date.now()}-${Math.random()}`;
         const optimisticMessage = {
           _id: tempId,
@@ -268,20 +277,21 @@ export const MessageProvider = ({ children }) => {
 
         setMessages((prev) => [...prev, optimisticMessage]);
 
-        // 2. CALL BACKEND REST ENDPOINT (REQUIRED)
+        // backend API save
         const data = await messageAPI.sendMessage(receiverId, text);
 
-        // 3. Replace optimistic message with real message
+        // replace optimistic with real
         setMessages((prev) =>
           prev.map((msg) => (msg._id === tempId ? data.message : msg))
         );
 
-        // 4. Emit Socket AFTER backend saved it
+        // emit socket event AFTER save
         if (socketService.isConnected()) {
           socketService.sendMessage(receiverId, text, null, data.message._id);
         }
 
-        await loadChats();
+        // ❌ REMOVED — socket will update chats automatically
+        // await loadChats();
 
         return data.message;
       } catch (err) {
