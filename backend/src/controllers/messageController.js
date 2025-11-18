@@ -308,14 +308,6 @@ export const sendImageMessage = async (req, res) => {
       });
     }
 
-    const io = getIO();
-    if (io) {
-      io.to(receiverId.toString()).emit("new_message", {
-        message,
-        from: senderId.toString(),
-      });
-    }
-
     const fileType = req.file.mimetype;
     const allowedTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
@@ -333,8 +325,10 @@ export const sendImageMessage = async (req, res) => {
       });
     }
 
+    // ✅ Upload to Cloudinary first
     const result = await uploadToCloudinary(req.file.buffer, "messages");
 
+    // ✅ CREATE the message
     const message = await Message.create({
       senderId,
       receiverId,
@@ -342,6 +336,15 @@ export const sendImageMessage = async (req, res) => {
       imagePublicId: result.public_id,
       read: false,
     });
+
+    // ✅ THEN emit to socket (AFTER message exists!)
+    const io = getIO();
+    if (io) {
+      io.to(receiverId.toString()).emit("new_message", {
+        message,
+        from: senderId.toString(),
+      });
+    }
 
     res.status(201).json({
       success: true,
