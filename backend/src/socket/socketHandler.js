@@ -118,7 +118,7 @@ export const initializeSocket = (httpServer) => {
 
     socket.join(userId);
     io.emit("user_online", { userId });
-    socket.emit("online_users", [...onlineUsers.keys()]);
+    socket.emit("online_users", { users: [...onlineUsers.keys()] });
 
     // ==========================
     // SEND MESSAGE
