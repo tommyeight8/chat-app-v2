@@ -355,66 +355,66 @@ export const MessageProvider = ({ children }) => {
     [onlineUsers]
   );
 
-  // ✅ ADD THIS DEBUG HOOK
-  useEffect(() => {
-    window.DEBUG_CHAT = {
-      onlineUsers: Array.from(onlineUsers),
-      currentChat,
-      user,
-      checkOnlineStatus: (userId) => {
-        console.log("=== ONLINE STATUS CHECK ===");
-        console.log("Checking user ID:", userId);
-        console.log("Type:", typeof userId);
-        console.log("String version:", String(userId));
-        console.log("Online users in set:", Array.from(onlineUsers));
-        console.log("Is in set (direct)?", onlineUsers.has(userId));
-        console.log("Is in set (as string)?", onlineUsers.has(String(userId)));
-        console.log("=========================");
-        return onlineUsers.has(String(userId));
-      },
-    };
-  }, [onlineUsers, currentChat, user]);
+  // // ✅ ADD THIS DEBUG HOOK
+  // useEffect(() => {
+  //   window.DEBUG_CHAT = {
+  //     onlineUsers: Array.from(onlineUsers),
+  //     currentChat,
+  //     user,
+  //     checkOnlineStatus: (userId) => {
+  //       console.log("=== ONLINE STATUS CHECK ===");
+  //       console.log("Checking user ID:", userId);
+  //       console.log("Type:", typeof userId);
+  //       console.log("String version:", String(userId));
+  //       console.log("Online users in set:", Array.from(onlineUsers));
+  //       console.log("Is in set (direct)?", onlineUsers.has(userId));
+  //       console.log("Is in set (as string)?", onlineUsers.has(String(userId)));
+  //       console.log("=========================");
+  //       return onlineUsers.has(String(userId));
+  //     },
+  //   };
+  // }, [onlineUsers, currentChat, user]);
 
-  // ✅ ADD THIS SOCKET EVENT DEBUG
-  useEffect(() => {
-    if (!user?.id) return;
+  // // ✅ ADD THIS SOCKET EVENT DEBUG
+  // useEffect(() => {
+  //   if (!user?.id) return;
 
-    console.log("=== SOCKET LISTENERS DEBUG ===");
+  //   console.log("=== SOCKET LISTENERS DEBUG ===");
 
-    socketService.socket.on("online_users", (data) => {
-      console.log("📊 online_users event received:");
-      console.log("  Raw data:", data);
-      console.log("  Type of data:", typeof data);
-      console.log("  Is array?", Array.isArray(data));
+  //   socketService.socket.on("online_users", (data) => {
+  //     console.log("📊 online_users event received:");
+  //     console.log("  Raw data:", data);
+  //     console.log("  Type of data:", typeof data);
+  //     console.log("  Is array?", Array.isArray(data));
 
-      if (data.users) {
-        console.log("  data.users:", data.users);
-        console.log("  First user:", data.users[0]);
-        console.log("  Type of first:", typeof data.users[0]);
-      } else if (Array.isArray(data)) {
-        console.log("  Direct array, first item:", data[0]);
-        console.log("  Type:", typeof data[0]);
-      }
-    });
+  //     if (data.users) {
+  //       console.log("  data.users:", data.users);
+  //       console.log("  First user:", data.users[0]);
+  //       console.log("  Type of first:", typeof data.users[0]);
+  //     } else if (Array.isArray(data)) {
+  //       console.log("  Direct array, first item:", data[0]);
+  //       console.log("  Type:", typeof data[0]);
+  //     }
+  //   });
 
-    socketService.socket.on("user_online", (data) => {
-      console.log("🟢 user_online event received:");
-      console.log("  userId:", data.userId);
-      console.log("  Type:", typeof data.userId);
-    });
+  //   socketService.socket.on("user_online", (data) => {
+  //     console.log("🟢 user_online event received:");
+  //     console.log("  userId:", data.userId);
+  //     console.log("  Type:", typeof data.userId);
+  //   });
 
-    socketService.socket.on("user_offline", (data) => {
-      console.log("🔴 user_offline event received:");
-      console.log("  userId:", data.userId);
-      console.log("  Type:", typeof data.userId);
-    });
+  //   socketService.socket.on("user_offline", (data) => {
+  //     console.log("🔴 user_offline event received:");
+  //     console.log("  userId:", data.userId);
+  //     console.log("  Type:", typeof data.userId);
+  //   });
 
-    return () => {
-      socketService.socket.off("online_users");
-      socketService.socket.off("user_online");
-      socketService.socket.off("user_offline");
-    };
-  }, [user?.id]);
+  //   return () => {
+  //     socketService.socket.off("online_users");
+  //     socketService.socket.off("user_online");
+  //     socketService.socket.off("user_offline");
+  //   };
+  // }, [user?.id]);
 
   const value = {
     contacts,
