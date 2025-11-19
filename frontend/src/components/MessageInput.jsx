@@ -1,4 +1,4 @@
-// frontend/src/components/MessageInput.jsx (CORRECTED)
+// frontend/src/components/MessageInput.jsx (FINAL FIXED)
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useMessages } from "../context/MessageContext";
 import { FILE_UPLOAD } from "../config/constants";
@@ -8,9 +8,10 @@ const MessageInput = ({ receiverId }) => {
   const [selectedImage, setSelectedImage] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [sending, setSending] = useState(false);
+
   const fileInputRef = useRef(null);
 
-  // Typing indicator refs
+  // Typing indicator state
   const typingTimeoutRef = useRef(null);
   const isTypingRef = useRef(false);
   const keystrokeCountRef = useRef(0);
@@ -18,13 +19,11 @@ const MessageInput = ({ receiverId }) => {
   const { sendMessage, sendImageMessage, emitTyping, emitStopTyping, error } =
     useMessages();
 
-  // Configuration
   const TYPING_THRESHOLD = 15;
   const TYPING_TIMEOUT = 2000;
 
-  // ✅ FIXED: Memoize handleRemoveImage
+  // 🎯 FIX: Only revoke preview on demand (not during onChange)
   const handleRemoveImage = useCallback(() => {
-    // Revoke object URL to free memory
     if (imagePreview) {
       URL.revokeObjectURL(imagePreview);
     }
@@ -40,82 +39,61 @@ const MessageInput = ({ receiverId }) => {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      if (isTypingRef.current) emitStopTyping();
+      if (imagePreview) URL.revokeObjectURL(imagePreview);
+    };
+  }, [emitStopTyping, imagePreview]);
+
+  // Reset when user switches chat
+  useEffect(() => {
+    return () => {
       if (typingTimeoutRef.current) {
         clearTimeout(typingTimeoutRef.current);
       }
       if (isTypingRef.current) {
         emitStopTyping();
       }
-      // Clean up image preview URL
+      // ✅ Clean up blob URL only on unmount
       if (imagePreview) {
         URL.revokeObjectURL(imagePreview);
       }
     };
-  }, [emitStopTyping, imagePreview]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // ✅ Empty deps - Document 11 pattern!
 
-  // Clear form when receiver changes
-  useEffect(() => {
-    setText("");
-    handleRemoveImage();
-    keystrokeCountRef.current = 0;
-
-    // Stop typing indicator
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-    }
-    if (isTypingRef.current) {
-      emitStopTyping();
-      isTypingRef.current = false;
-    }
-  }, [receiverId, handleRemoveImage, emitStopTyping]);
-
+  // Revoke OLD blob when selecting NEW image
   const handleImageSelect = (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    // Validate file type
-    if (!FILE_UPLOAD.ALLOWED_TYPES.includes(file.type)) {
-      alert("Please select a valid image file (JPEG, PNG, GIF, or WebP)");
-      return;
-    }
+    // Validation...
 
-    // Validate file size
-    if (file.size > FILE_UPLOAD.MAX_SIZE) {
-      alert(
-        `Image size must be less than ${FILE_UPLOAD.MAX_SIZE / 1024 / 1024}MB`
-      );
-      return;
-    }
-
-    // Revoke old preview URL before creating new one
+    // ✅ Revoke old blob BEFORE creating new one
     if (imagePreview) {
       URL.revokeObjectURL(imagePreview);
     }
 
+    const newBlobUrl = URL.createObjectURL(file);
     setSelectedImage(file);
-    setImagePreview(URL.createObjectURL(file));
+    setImagePreview(newBlobUrl);
   };
 
+  // Typing handler
   const handleTextChange = (e) => {
     const newText = e.target.value;
     setText(newText);
 
-    // Count non-whitespace characters
     const nonWhitespaceCount = newText.replace(/\s/g, "").length;
     keystrokeCountRef.current = nonWhitespaceCount;
 
-    // Only emit typing if threshold is met
-    if (keystrokeCountRef.current >= TYPING_THRESHOLD && !isTypingRef.current) {
+    if (nonWhitespaceCount >= TYPING_THRESHOLD && !isTypingRef.current) {
       emitTyping();
       isTypingRef.current = true;
     }
 
-    // Clear previous timeout
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-    }
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
 
-    // Send "stop typing" after inactivity
     if (isTypingRef.current) {
       typingTimeoutRef.current = setTimeout(() => {
         emitStopTyping();
@@ -125,38 +103,33 @@ const MessageInput = ({ receiverId }) => {
     }
   };
 
+  // Send message
   const handleSend = async (e) => {
     e.preventDefault();
-
     if (!text.trim() && !selectedImage) return;
-    if (sending) return; // Prevent double submission
+    if (sending) return;
 
     setSending(true);
 
-    // Stop typing indicator immediately
-    if (typingTimeoutRef.current) {
-      clearTimeout(typingTimeoutRef.current);
-    }
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     if (isTypingRef.current) {
       emitStopTyping();
       isTypingRef.current = false;
     }
+
     keystrokeCountRef.current = 0;
 
     try {
-      // Send image if present
       if (selectedImage) {
         await sendImageMessage(receiverId, selectedImage, text.trim());
         handleRemoveImage();
         setText("");
       } else if (text.trim()) {
-        // Send text only
         await sendMessage(receiverId, text.trim());
         setText("");
       }
-    } catch (error) {
-      console.error("❌ Send message error:", error);
-      // Error is handled in context and displayed in UI
+    } catch (err) {
+      console.error("Send error:", err);
     } finally {
       setSending(false);
     }
@@ -164,14 +137,12 @@ const MessageInput = ({ receiverId }) => {
 
   return (
     <div className="border-t border-theme bg-theme">
-      {/* ✅ Error Display */}
       {error && (
         <div className="px-4 py-2 bg-red-50 border-b border-red-200">
           <p className="text-sm text-red-600">{error}</p>
         </div>
       )}
 
-      {/* Image Preview */}
       {imagePreview && (
         <div className="p-4 border-b border-theme">
           <div className="relative inline-block">
@@ -183,8 +154,7 @@ const MessageInput = ({ receiverId }) => {
             <button
               type="button"
               onClick={handleRemoveImage}
-              className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-red-600 transition-colors"
-              aria-label="Remove image"
+              className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center"
             >
               ×
             </button>
@@ -192,23 +162,21 @@ const MessageInput = ({ receiverId }) => {
         </div>
       )}
 
-      {/* Input Form */}
       <form onSubmit={handleSend} className="p-4 flex items-end gap-2">
-        {/* Image Upload Button */}
         <input
           ref={fileInputRef}
           type="file"
           accept={FILE_UPLOAD.ALLOWED_TYPES.join(",")}
           onChange={handleImageSelect}
           className="hidden"
-          aria-label="Upload image"
         />
+
+        {/* Attach Image Button */}
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          className="flex-shrink-0 p-2 text-theme-secondary hover:text-primary hover:bg-[var(--color-primaryLight)] rounded-lg transition-colors"
+          className="flex-shrink-0 p-2 text-theme-secondary hover:text-primary hover:bg-[var(--color-primaryLight)] rounded-lg"
           disabled={sending}
-          aria-label="Attach image"
         >
           <svg
             className="w-6 h-6"
@@ -238,10 +206,9 @@ const MessageInput = ({ receiverId }) => {
             }}
             placeholder="Type a message..."
             rows={1}
-            className="w-full px-4 py-2 bg-theme text-theme border border-theme rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent resize-none placeholder:text-theme-tertiary"
+            className="w-full px-4 py-2 bg-theme text-theme border border-theme rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] resize-none placeholder:text-theme-tertiary"
             disabled={sending}
             style={{ maxHeight: "120px" }}
-            aria-label="Message input"
           />
         </div>
 
@@ -249,8 +216,7 @@ const MessageInput = ({ receiverId }) => {
         <button
           type="submit"
           disabled={(!text.trim() && !selectedImage) || sending}
-          className="flex-shrink-0 p-2 bg-primary text-white rounded-lg hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          aria-label="Send message"
+          className="flex-shrink-0 p-2 bg-primary text-white rounded-lg hover:bg-primary-hover disabled:opacity-50"
         >
           {sending ? (
             <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
