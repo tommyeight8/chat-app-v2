@@ -1,4 +1,3 @@
-// frontend/src/context/MessageContext.jsx (ADD PAGINATION)
 import {
   createContext,
   useContext,
@@ -6,53 +5,291 @@ import {
   useEffect,
   useCallback,
   useRef,
+  useMemo,
 } from "react";
 import { messageAPI } from "../services/messageApi";
 import { useAuth } from "./AuthContext";
 import socketService from "../services/socket";
-import { PAGINATION } from "../config/constants"; // ✅ Import
+import { PAGINATION } from "../config/constants";
+
+import soundManager from "../utils/soundUtils";
 
 const MessageContext = createContext(null);
 
 export const MessageProvider = ({ children }) => {
-  const { user } = useAuth();
+  const { user, isAuthenticated } = useAuth();
+
+  // ---------- STATE ----------
   const [contacts, setContacts] = useState([]);
   const [chats, setChats] = useState([]);
   const [currentChat, setCurrentChat] = useState(null);
   const [messages, setMessages] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false); // ✅ NEW
-  const [hasMore, setHasMore] = useState(true); // ✅ NEW
+
+  // More granular loading flags
+  const [loadingContacts, setLoadingContacts] = useState(false);
+  const [loadingChats, setLoadingChats] = useState(false);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  const [hasMore, setHasMore] = useState(true);
   const [error, setError] = useState(null);
   const [isTyping, setIsTyping] = useState(false);
+
   const [onlineUsers, setOnlineUsers] = useState(new Set());
+  const [socketConnected, setSocketConnected] = useState(false);
 
   const currentChatRef = useRef(null);
+  const setupListenersRef = useRef(false);
 
+  // Keep ref in sync with currentChat for socket callbacks
   useEffect(() => {
     currentChatRef.current = currentChat;
   }, [currentChat]);
 
-  useEffect(() => {
-    if (user?.id) {
-      console.log(`🔌 User logged in, connecting socket for user: ${user.id}`);
-      socketService.connect();
-      setupSocketListeners();
+  // ---------- HELPERS ----------
+  const safeUserId = user?.id || user?._id || null;
 
-      return () => {
-        console.log("🧹 Cleaning up socket listeners");
-        socketService.removeAllListeners();
-        socketService.disconnect();
-      };
-    } else {
-      console.log("👤 No user, disconnecting socket");
-      socketService.disconnect();
+  // ---------- LOADERS ----------
+  const loadContacts = useCallback(async () => {
+    try {
+      setLoadingContacts(true);
+      const data = await messageAPI.getAllContacts();
+      setContacts(data.contacts || []);
+      setError(null);
+    } catch (err) {
+      const errorMessage =
+        err.response?.data?.message || "Failed to load contacts";
+      setError(errorMessage);
+      console.error("❌ Load contacts error:", errorMessage);
+    } finally {
+      setLoadingContacts(false);
     }
-  }, [user?.id]);
+  }, []);
 
-  const setupSocketListeners = () => {
+  const loadChats = useCallback(async () => {
+    try {
+      // This is used by ChatList and some socket callbacks,
+      // but we DO NOT clear chats before loading, so no flicker.
+      setLoadingChats(true);
+      const data = await messageAPI.getChatPartners();
+      setChats(data.chats || []);
+      setError(null);
+    } catch (err) {
+      const errorMessage =
+        err.response?.data?.message || "Failed to load chats";
+      setError(errorMessage);
+      console.error("❌ Load chats error:", errorMessage);
+    } finally {
+      setLoadingChats(false);
+    }
+  }, []);
+
+  const loadMessages = useCallback(
+    async (userId) => {
+      try {
+        setLoadingMessages(true);
+
+        const data = await messageAPI.getMessages(userId);
+        setMessages(data.messages || []);
+        setCurrentChat(data.user || null);
+        setHasMore(data.hasMore || false);
+        setError(null);
+
+        // Mark as read
+        if (socketService.isConnected()) {
+          socketService.markMessagesRead(userId);
+        }
+
+        // Refresh chats (unread counts, lastMessage, etc)
+        // NOTE: this sets loadingChats but does not blank the list
+        loadChats();
+
+        return data;
+      } catch (err) {
+        const errorMessage =
+          err.response?.data?.message || "Failed to load messages";
+        setError(errorMessage);
+        console.error("❌ Load messages error:", errorMessage);
+        return null;
+      } finally {
+        setLoadingMessages(false);
+      }
+    },
+    [loadChats]
+  );
+
+  const loadMoreMessages = useCallback(async () => {
+    if (!currentChatRef.current || loadingMore || !hasMore) return;
+
+    try {
+      setLoadingMore(true);
+
+      const oldestMessage = messages[0];
+      if (!oldestMessage) {
+        setHasMore(false);
+        return;
+      }
+
+      const cursor = oldestMessage.createdAt;
+      console.log(`📜 Loading more messages before: ${cursor}`);
+
+      const data = await messageAPI.getMessages(
+        currentChatRef.current._id,
+        cursor, // before
+        PAGINATION.MESSAGES_PER_PAGE // limit
+      );
+
+      if (data.messages && data.messages.length > 0) {
+        setMessages((prev) => [...data.messages, ...prev]);
+        setHasMore(data.hasMore || false);
+        console.log(`✅ Loaded ${data.messages.length} more messages`);
+      } else {
+        setHasMore(false);
+        console.log("📭 No more messages to load");
+      }
+    } catch (err) {
+      const errorMessage =
+        err.response?.data?.message || "Failed to load more messages";
+      console.error("❌ Load more messages error:", errorMessage);
+      setError(errorMessage);
+      setTimeout(() => setError(null), 3000);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [messages, loadingMore, hasMore]);
+
+  // ---------- SENDERS ----------
+  const sendMessage = useCallback(
+    async (receiverId, text) => {
+      const trimmed = text?.trim();
+      if (!trimmed) {
+        console.warn("⚠️ Cannot send empty message");
+        return;
+      }
+
+      try {
+        const tempId = `temp-${Date.now()}-${Math.random()}`;
+        const optimisticMessage = {
+          _id: tempId,
+          senderId: safeUserId,
+          receiverId,
+          text: trimmed,
+          createdAt: new Date().toISOString(),
+          read: false,
+        };
+
+        // Optimistic UI
+        setMessages((prev) => [...prev, optimisticMessage]);
+
+        const data = await messageAPI.sendMessage(receiverId, trimmed);
+
+        setMessages((prev) =>
+          prev.map((msg) => (msg._id === tempId ? data.message : msg))
+        );
+
+        await loadChats();
+
+        return data.message;
+      } catch (err) {
+        const errorMessage =
+          err.response?.data?.message || "Failed to send message";
+        console.error("❌ Send message error:", errorMessage);
+
+        // Rollback optimistic temp messages
+        setMessages((prev) =>
+          prev.filter((msg) => !msg._id?.startsWith("temp-"))
+        );
+
+        setError(errorMessage);
+        setTimeout(() => setError(null), 3000);
+
+        throw err;
+      }
+    },
+    [safeUserId, loadChats]
+  );
+
+  const sendImageMessage = useCallback(
+    async (receiverId, imageFile, text = "") => {
+      try {
+        const data = await messageAPI.sendImageMessage(
+          receiverId,
+          imageFile,
+          text
+        );
+        setMessages((prev) => [...prev, data.message]);
+        await loadChats();
+        return data.message;
+      } catch (err) {
+        const errorMessage =
+          err.response?.data?.message || "Failed to send image";
+        console.error("❌ Send image error:", errorMessage);
+        setError(errorMessage);
+        setTimeout(() => setError(null), 3000);
+        throw err;
+      }
+    },
+    [loadChats]
+  );
+
+  // ---------- CHAT SELECTION ----------
+  const selectChat = useCallback(
+    async (chatUser) => {
+      // We keep currentChat immediately for UI highlight
+      setCurrentChat(chatUser);
+      setIsTyping(false);
+      setHasMore(true);
+
+      // Now load messages (this will only set loadingMessages,
+      // so the sidebar won't flicker)
+      await loadMessages(chatUser._id);
+    },
+    [loadMessages]
+  );
+
+  const clearCurrentChat = useCallback(() => {
+    setCurrentChat(null);
+    setMessages([]);
+    setIsTyping(false);
+    setHasMore(true);
+  }, []);
+
+  // ---------- TYPING ----------
+  const emitTyping = useCallback(() => {
+    if (currentChatRef.current && socketService.isConnected()) {
+      socketService.emitTyping(currentChatRef.current._id);
+    }
+  }, []);
+
+  const emitStopTyping = useCallback(() => {
+    if (currentChatRef.current && socketService.isConnected()) {
+      socketService.emitStopTyping(currentChatRef.current._id);
+    }
+  }, []);
+
+  // ---------- ONLINE STATUS ----------
+  const isUserOnline = useCallback(
+    (userId) => {
+      return onlineUsers.has(String(userId));
+    },
+    [onlineUsers]
+  );
+
+  const clearError = useCallback(() => {
+    setError(null);
+  }, []);
+
+  // ---------- SOCKET LISTENERS ----------
+  const setupSocketListeners = useCallback(() => {
+    if (setupListenersRef.current) {
+      console.log("⚠️ Listeners already set up, skipping");
+      return;
+    }
+
     console.log("👂 Setting up socket listeners");
+    setupListenersRef.current = true;
 
+    // Initial online users
     socketService.onOnlineUsers((data) => {
       console.log("👥 Initial online users:", data.users);
       setOnlineUsers(new Set(data.users.map(String)));
@@ -67,16 +304,17 @@ export const MessageProvider = ({ children }) => {
         isFromCurrentChat: currentChatRef.current?._id === from,
       });
 
-      // 🚫 IMPORTANT FIX — ignore your own message (prevents duplicates)
-      if (from === (user?._id || user?.id)) {
-        console.log(
-          "⚠️ Ignoring own message from socket to prevent duplicates"
-        );
+      // Ignore own messages to prevent duplicates
+      if (from === safeUserId) {
+        console.log("⚠️ Ignoring own message from socket");
         return;
       }
 
-      // If it's the active chat: append
+      // ✅ Play notification sound
+      soundManager.play("notification");
+
       if (currentChatRef.current?._id === from) {
+        // Append to current message list
         setMessages((prev) => {
           if (prev.find((m) => m._id === message._id)) {
             console.log("⚠️ Duplicate message ignored");
@@ -91,43 +329,12 @@ export const MessageProvider = ({ children }) => {
         console.log("📬 Message from other chat — updating chat list only");
       }
 
+      // Refresh chats list (unread, lastMessage, etc)
       loadChats();
-    });
-
-    socketService.onMessageSent((data) => {
-      const { tempId, message } = data;
-
-      console.log("✅ Message sent confirmation:", {
-        tempId,
-        messageId: message._id,
-      });
-
-      setMessages((prev) =>
-        prev.map((msg) => {
-          if (msg._id === tempId) {
-            console.log(
-              `🔄 Replacing temp message ${tempId} with ${message._id}`
-            );
-            return message;
-          }
-          return msg;
-        })
-      );
-    });
-
-    socketService.onMessageError((data) => {
-      const { error, tempId } = data;
-      console.error("❌ Message send error:", error);
-
-      setMessages((prev) => prev.filter((msg) => msg._id !== tempId));
-      setError(error);
-
-      setTimeout(() => setError(null), 5000);
     });
 
     socketService.onMessagesRead((data) => {
       const { readBy, count } = data;
-
       console.log(`✓ ${count} messages read by ${readBy}`);
 
       setMessages((prev) =>
@@ -154,292 +361,126 @@ export const MessageProvider = ({ children }) => {
     });
 
     socketService.onUserOnline((data) => {
+      console.log("🟢 User came online:", data.userId);
       setOnlineUsers((prev) => new Set([...prev, String(data.userId)]));
     });
 
     socketService.onUserOffline((data) => {
+      console.log("🔴 User went offline:", data.userId);
       setOnlineUsers((prev) => {
-        const newSet = new Set(prev);
-        newSet.delete(String(data.userId));
-        return newSet;
+        const next = new Set(prev);
+        next.delete(String(data.userId));
+        return next;
       });
     });
-  };
+  }, [safeUserId, loadChats]);
 
-  const loadContacts = useCallback(async () => {
-    try {
-      setLoading(true);
-      const data = await messageAPI.getAllContacts();
-      setContacts(data.contacts || []);
-      setError(null);
-    } catch (err) {
-      setError(err.response?.data?.message || "Failed to load contacts");
-      console.error("Load contacts error:", err);
-    } finally {
-      setLoading(false);
+  // ---------- SOCKET LIFECYCLE ----------
+  useEffect(() => {
+    if (isAuthenticated && safeUserId) {
+      console.log("🔌 User authenticated, connecting socket");
+
+      socketService.connect();
+      setSocketConnected(true);
+      setupSocketListeners();
+
+      return () => {
+        console.log("🧹 Cleaning up socket connection");
+        setupListenersRef.current = false;
+        socketService.removeAllListeners();
+        socketService.disconnect();
+        setSocketConnected(false);
+      };
+    } else {
+      console.log("👤 Not authenticated, disconnecting socket");
+      setupListenersRef.current = false;
+      socketService.disconnect();
+      setSocketConnected(false);
+
+      // Clear state on logout
+      setContacts([]);
+      setChats([]);
+      setCurrentChat(null);
+      setMessages([]);
+      setOnlineUsers(new Set());
     }
-  }, []);
+  }, [isAuthenticated, safeUserId, setupSocketListeners]);
 
-  const loadChats = useCallback(async () => {
-    try {
-      const data = await messageAPI.getChatPartners();
-      setChats(data.chats || []);
-      setError(null);
-    } catch (err) {
-      setError(err.response?.data?.message || "Failed to load chats");
-      console.error("Load chats error:", err);
+  // ---------- INITIAL DATA LOAD ----------
+  useEffect(() => {
+    if (isAuthenticated) {
+      // Load contacts & chats once user is authenticated
+      loadContacts();
+      loadChats();
     }
-  }, []);
+  }, [isAuthenticated, loadContacts, loadChats]);
 
-  // ✅ UPDATED: Load initial messages
-  const loadMessages = useCallback(
-    async (userId) => {
-      try {
-        setLoading(true);
-        const data = await messageAPI.getMessages(userId);
-        setMessages(data.messages || []);
-        setCurrentChat(data.user);
-        setHasMore(data.hasMore || false); // ✅ Set hasMore from API
-        setError(null);
+  // ---------- CONTEXT VALUE (MEMOIZED) ----------
+  const value = useMemo(
+    () => ({
+      // data
+      contacts,
+      chats,
+      currentChat,
+      messages,
+      hasMore,
+      isTyping,
+      onlineUsers,
 
-        if (socketService.isConnected()) {
-          socketService.markMessagesRead(userId);
-        }
+      // loading flags
+      loadingContacts,
+      loadingChats,
+      loadingMessages,
+      loadingMore,
 
-        loadChats();
+      // errors
+      error,
 
-        return data;
-      } catch (err) {
-        setError(err.response?.data?.message || "Failed to load messages");
-        console.error("Load messages error:", err);
-        return null;
-      } finally {
-        setLoading(false);
-      }
-    },
-    [loadChats]
+      // socket
+      socketConnected,
+
+      // actions
+      loadContacts,
+      loadChats,
+      loadMessages,
+      loadMoreMessages,
+      sendMessage,
+      sendImageMessage,
+      selectChat,
+      clearCurrentChat,
+      emitTyping,
+      emitStopTyping,
+      isUserOnline,
+      clearError,
+    }),
+    [
+      contacts,
+      chats,
+      currentChat,
+      messages,
+      hasMore,
+      isTyping,
+      onlineUsers,
+      loadingContacts,
+      loadingChats,
+      loadingMessages,
+      loadingMore,
+      error,
+      socketConnected,
+      loadContacts,
+      loadChats,
+      loadMessages,
+      loadMoreMessages,
+      sendMessage,
+      sendImageMessage,
+      selectChat,
+      clearCurrentChat,
+      emitTyping,
+      emitStopTyping,
+      isUserOnline,
+      clearError,
+    ]
   );
-
-  // ✅ NEW: Load more messages (pagination)
-  const loadMoreMessages = useCallback(async () => {
-    if (!currentChatRef.current || loadingMore || !hasMore) {
-      return;
-    }
-
-    try {
-      setLoadingMore(true);
-
-      // Get oldest message timestamp as cursor
-      const oldestMessage = messages[0];
-      if (!oldestMessage) return;
-
-      const cursor = oldestMessage.createdAt;
-
-      console.log(`📜 Loading more messages before: ${cursor}`);
-
-      const data = await messageAPI.getMessages(
-        currentChatRef.current._id,
-        cursor,
-        PAGINATION.MESSAGES_PER_PAGE
-      );
-
-      if (data.messages && data.messages.length > 0) {
-        // ✅ Prepend older messages
-        setMessages((prev) => [...data.messages, ...prev]);
-        setHasMore(data.hasMore || false);
-        console.log(`✅ Loaded ${data.messages.length} more messages`);
-      } else {
-        setHasMore(false);
-        console.log("📭 No more messages to load");
-      }
-    } catch (err) {
-      console.error("Load more messages error:", err);
-      setError(err.response?.data?.message || "Failed to load more messages");
-      setTimeout(() => setError(null), 3000);
-    } finally {
-      setLoadingMore(false);
-    }
-  }, [messages, loadingMore, hasMore]);
-
-  const sendMessage = useCallback(
-    async (receiverId, text) => {
-      try {
-        const tempId = `temp-${Date.now()}-${Math.random()}`;
-        const optimisticMessage = {
-          _id: tempId,
-          senderId: user?.id,
-          receiverId,
-          text,
-          createdAt: new Date().toISOString(),
-          read: false,
-        };
-
-        setMessages((prev) => [...prev, optimisticMessage]);
-
-        const data = await messageAPI.sendMessage(receiverId, text);
-
-        // Replace optimistic with real message from REST
-        setMessages((prev) =>
-          prev.map((msg) => (msg._id === tempId ? data.message : msg))
-        );
-
-        // 🚫 NO socketService.sendMessage here anymore
-
-        await loadChats();
-
-        return data.message;
-      } catch (err) {
-        console.error("Send message error:", err);
-        setMessages((prev) =>
-          prev.filter((msg) => !msg._id?.startsWith("temp-"))
-        );
-        setError("Failed to send message");
-        throw err;
-      }
-    },
-    [user, loadChats]
-  );
-
-  const sendImageMessage = useCallback(
-    async (receiverId, imageFile) => {
-      try {
-        const data = await messageAPI.sendImageMessage(receiverId, imageFile);
-
-        setMessages((prev) => [...prev, data.message]);
-
-        // 🚫 remove socketService.sendMessage here too
-
-        await loadChats();
-
-        return data.message;
-      } catch (err) {
-        console.error("Send image error:", err);
-        setError("Failed to send image");
-        throw err;
-      }
-    },
-    [loadChats]
-  );
-
-  const selectChat = useCallback(
-    async (user) => {
-      setCurrentChat(user);
-      setIsTyping(false);
-      setHasMore(true); // ✅ Reset hasMore for new chat
-      await loadMessages(user._id);
-    },
-    [loadMessages]
-  );
-
-  const clearCurrentChat = useCallback(() => {
-    setCurrentChat(null);
-    setMessages([]);
-    setIsTyping(false);
-    setHasMore(true); // ✅ Reset hasMore
-  }, []);
-
-  const emitTyping = useCallback(() => {
-    if (currentChatRef.current && socketService.isConnected()) {
-      socketService.emitTyping(currentChatRef.current._id);
-    }
-  }, []);
-
-  const emitStopTyping = useCallback(() => {
-    if (currentChatRef.current && socketService.isConnected()) {
-      socketService.emitStopTyping(currentChatRef.current._id);
-    }
-  }, []);
-
-  const isUserOnline = useCallback(
-    (userId) => onlineUsers.has(String(userId)),
-    [onlineUsers]
-  );
-
-  // // ✅ ADD THIS DEBUG HOOK
-  // useEffect(() => {
-  //   window.DEBUG_CHAT = {
-  //     onlineUsers: Array.from(onlineUsers),
-  //     currentChat,
-  //     user,
-  //     checkOnlineStatus: (userId) => {
-  //       console.log("=== ONLINE STATUS CHECK ===");
-  //       console.log("Checking user ID:", userId);
-  //       console.log("Type:", typeof userId);
-  //       console.log("String version:", String(userId));
-  //       console.log("Online users in set:", Array.from(onlineUsers));
-  //       console.log("Is in set (direct)?", onlineUsers.has(userId));
-  //       console.log("Is in set (as string)?", onlineUsers.has(String(userId)));
-  //       console.log("=========================");
-  //       return onlineUsers.has(String(userId));
-  //     },
-  //   };
-  // }, [onlineUsers, currentChat, user]);
-
-  // // ✅ ADD THIS SOCKET EVENT DEBUG
-  // useEffect(() => {
-  //   if (!user?.id) return;
-
-  //   console.log("=== SOCKET LISTENERS DEBUG ===");
-
-  //   socketService.socket.on("online_users", (data) => {
-  //     console.log("📊 online_users event received:");
-  //     console.log("  Raw data:", data);
-  //     console.log("  Type of data:", typeof data);
-  //     console.log("  Is array?", Array.isArray(data));
-
-  //     if (data.users) {
-  //       console.log("  data.users:", data.users);
-  //       console.log("  First user:", data.users[0]);
-  //       console.log("  Type of first:", typeof data.users[0]);
-  //     } else if (Array.isArray(data)) {
-  //       console.log("  Direct array, first item:", data[0]);
-  //       console.log("  Type:", typeof data[0]);
-  //     }
-  //   });
-
-  //   socketService.socket.on("user_online", (data) => {
-  //     console.log("🟢 user_online event received:");
-  //     console.log("  userId:", data.userId);
-  //     console.log("  Type:", typeof data.userId);
-  //   });
-
-  //   socketService.socket.on("user_offline", (data) => {
-  //     console.log("🔴 user_offline event received:");
-  //     console.log("  userId:", data.userId);
-  //     console.log("  Type:", typeof data.userId);
-  //   });
-
-  //   return () => {
-  //     socketService.socket.off("online_users");
-  //     socketService.socket.off("user_online");
-  //     socketService.socket.off("user_offline");
-  //   };
-  // }, [user?.id]);
-
-  const value = {
-    contacts,
-    chats,
-    currentChat,
-    messages,
-    loading,
-    loadingMore, // ✅ NEW
-    hasMore, // ✅ NEW
-    error,
-    isTyping,
-    onlineUsers,
-    socketConnected: socketService.isConnected(),
-    loadContacts,
-    loadChats,
-    loadMessages,
-    loadMoreMessages, // ✅ NEW
-    sendMessage,
-    sendImageMessage,
-    selectChat,
-    clearCurrentChat,
-    emitTyping,
-    emitStopTyping,
-    isUserOnline,
-  };
 
   return (
     <MessageContext.Provider value={value}>{children}</MessageContext.Provider>

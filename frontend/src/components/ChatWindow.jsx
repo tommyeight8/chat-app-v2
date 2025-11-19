@@ -1,5 +1,5 @@
-// frontend/src/components/ChatWindow.jsx (FIXED SCROLL)
-import { useEffect, useRef, useState } from "react";
+// frontend/src/components/ChatWindow.jsx (CORRECTED)
+import { useEffect, useRef } from "react";
 import { useMessages } from "../context/MessageContext";
 import { useAuth } from "../context/AuthContext";
 import MessageBubble from "./MessageBubble";
@@ -12,7 +12,9 @@ const ChatWindow = () => {
     loading,
     loadingMore,
     hasMore,
+    error,
     clearCurrentChat,
+    clearError,
     isTyping,
     isUserOnline,
     loadMoreMessages,
@@ -27,12 +29,15 @@ const ChatWindow = () => {
   const prevScrollHeightRef = useRef(0);
   const isLoadingMoreRef = useRef(false);
 
-  // ✅ Track loadingMore state
+  // Track loadingMore state
   useEffect(() => {
     isLoadingMoreRef.current = loadingMore;
   }, [loadingMore]);
 
-  // ✅ FIXED: Only scroll on REAL message changes, not typing
+  // ✅ FIXED: Normalize user ID once
+  const userId = user?.id || user?._id;
+
+  // Scroll to bottom on new messages (only if near bottom)
   useEffect(() => {
     const container = messagesContainerRef.current;
     if (!container || messages.length === 0) return;
@@ -40,26 +45,24 @@ const ChatWindow = () => {
     const messagesAdded = messages.length - prevMessagesLengthRef.current;
     prevMessagesLengthRef.current = messages.length;
 
-    // Don't scroll if we're loading more (older messages)
+    // Don't scroll if loading more (older messages)
     if (isLoadingMoreRef.current) {
-      console.log("⏫ Loading more, preserving scroll position");
       return;
     }
 
-    // Only scroll to bottom if user is near bottom (for new messages)
+    // Only scroll to bottom if user is near bottom
     const isNearBottom =
       container.scrollHeight - container.scrollTop - container.clientHeight <
       150;
 
     if (messagesAdded > 0 && isNearBottom) {
-      console.log("⬇️ New message, scrolling to bottom");
       setTimeout(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
       }, 100);
     }
-  }, [messages]); // ✅ Only depends on real messages, not computedMessages
+  }, [messages]);
 
-  // ✅ Scroll to bottom when typing indicator appears (if near bottom)
+  // Scroll when typing indicator appears (if near bottom)
   useEffect(() => {
     const container = messagesContainerRef.current;
     if (!container || !isTyping) return;
@@ -75,17 +78,16 @@ const ChatWindow = () => {
     }
   }, [isTyping]);
 
-  // ✅ Initial scroll to bottom when chat opens
+  // Initial scroll to bottom when chat opens
   useEffect(() => {
     if (messages.length > 0 && !loading) {
-      console.log("🎯 Initial scroll to bottom");
       setTimeout(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "auto" });
       }, 100);
     }
-  }, [currentChat?._id]); // Only on chat change
+  }, [currentChat?._id, loading]);
 
-  // ✅ Intersection Observer for infinite scroll
+  // Intersection Observer for infinite scroll
   useEffect(() => {
     if (!hasMore || loadingMore || loading) return;
 
@@ -93,8 +95,6 @@ const ChatWindow = () => {
       (entries) => {
         const first = entries[0];
         if (first.isIntersecting) {
-          console.log("🔝 Reached top, loading more messages...");
-
           const container = messagesContainerRef.current;
           if (container) {
             prevScrollHeightRef.current = container.scrollHeight;
@@ -122,27 +122,23 @@ const ChatWindow = () => {
     };
   }, [hasMore, loadingMore, loading, loadMoreMessages]);
 
-  // ✅ FIXED: Restore scroll position after loading more messages
+  // Restore scroll position after loading more messages
   useEffect(() => {
     if (!loadingMore) return;
 
     const container = messagesContainerRef.current;
     if (!container) return;
 
+    // ✅ SIMPLIFIED: Single requestAnimationFrame
     requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        const newScrollHeight = container.scrollHeight;
-        const heightDifference = newScrollHeight - prevScrollHeightRef.current;
+      const newScrollHeight = container.scrollHeight;
+      const heightDifference = newScrollHeight - prevScrollHeightRef.current;
 
-        if (heightDifference > 0) {
-          container.scrollTop = container.scrollTop + heightDifference;
-          console.log(
-            `📍 Restored scroll position (added ${heightDifference}px)`
-          );
-        }
-      });
+      if (heightDifference > 0) {
+        container.scrollTop += heightDifference;
+      }
     });
-  }, [loadingMore, messages.length]); // ✅ Depends on real messages length
+  }, [loadingMore, messages.length]);
 
   if (!currentChat) return null;
 
@@ -151,11 +147,11 @@ const ChatWindow = () => {
   return (
     <div className="flex-1 flex flex-col bg-white h-screen">
       {/* Header */}
-      {/* Header */}
       <div className="p-4 border-b border-theme flex items-center gap-3 bg-header flex-shrink-0">
         <button
           onClick={clearCurrentChat}
           className="md:hidden text-theme-secondary hover:text-theme transition-colors"
+          aria-label="Back to chats"
         >
           <svg
             className="w-6 h-6"
@@ -185,11 +181,14 @@ const ChatWindow = () => {
             </div>
           )}
           {userOnline && (
-            <div className="absolute bottom-0 right-0 w-3 h-3 bg-[var(--color-online)] border-2 border-header rounded-full"></div>
+            <div
+              className="absolute bottom-0 right-0 w-3 h-3 bg-[var(--color-online)] border-2 border-header rounded-full"
+              aria-label="Online"
+            ></div>
           )}
         </div>
 
-        <div>
+        <div className="flex-1">
           <h2 className="font-semibold text-theme">{currentChat.fullname}</h2>
           <p className="text-sm text-theme-secondary">
             {isTyping ? (
@@ -203,12 +202,25 @@ const ChatWindow = () => {
         </div>
       </div>
 
+      {/* ✅ Error Display */}
+      {error && (
+        <div className="px-4 py-2 bg-red-50 border-b border-red-200 flex items-center justify-between">
+          <p className="text-sm text-red-600">{error}</p>
+          <button
+            onClick={clearError}
+            className="text-red-600 hover:text-red-800 text-sm font-medium"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Messages */}
       <div
         ref={messagesContainerRef}
-        className="flex-1 overflow-y-auto p-4 space-y-4 bg-[var(--color-chatBg)]"
+        className="flex-1 overflow-y-auto p-4 space-y-4 bg-[var(--color-chatBg)] thin-scrollbar"
       >
-        {/* Top Sentinel */}
+        {/* Top Sentinel for Infinite Scroll */}
         <div ref={topSentinelRef} className="h-1" />
 
         {/* Loading More Indicator */}
@@ -246,27 +258,25 @@ const ChatWindow = () => {
             </div>
           </div>
         ) : (
-          // ✅ Render real messages
+          // Render messages
           messages.map((message) => (
             <MessageBubble
               key={message._id}
               message={message}
-              isOwnMessage={message.senderId === (user?._id || user?.id)}
+              isOwnMessage={message.senderId === userId}
               senderName={
-                message.senderId === (user?._id || user?.id)
+                message.senderId === userId
                   ? user?.fullname || "You"
                   : currentChat?.fullname || "Unknown"
               }
               senderAvatar={
-                message.senderId === (user?._id || user?.id)
-                  ? user?.avatar
-                  : currentChat?.avatar
+                message.senderId === userId ? user?.avatar : currentChat?.avatar
               }
             />
           ))
         )}
 
-        {/* ✅ Typing Indicator (separate from messages) */}
+        {/* Typing Indicator */}
         {isTyping && (
           <div className="flex justify-start">
             <div className="bg-white rounded-2xl rounded-bl-none px-4 py-3 shadow-sm">
@@ -285,6 +295,7 @@ const ChatWindow = () => {
           </div>
         )}
 
+        {/* Scroll Anchor */}
         <div ref={messagesEndRef} />
       </div>
 

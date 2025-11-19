@@ -1,6 +1,7 @@
-// frontend/src/components/MessageInput.jsx (FIXED - NO DUPLICATE SENDS)
-import { useState, useRef, useEffect } from "react";
+// frontend/src/components/MessageInput.jsx (CORRECTED)
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useMessages } from "../context/MessageContext";
+import { FILE_UPLOAD } from "../config/constants";
 
 const MessageInput = ({ receiverId }) => {
   const [text, setText] = useState("");
@@ -9,68 +10,21 @@ const MessageInput = ({ receiverId }) => {
   const [sending, setSending] = useState(false);
   const fileInputRef = useRef(null);
 
-  // ✅ Typing indicator refs
+  // Typing indicator refs
   const typingTimeoutRef = useRef(null);
   const isTypingRef = useRef(false);
   const keystrokeCountRef = useRef(0);
 
-  const { sendMessage, sendImageMessage, emitTyping, emitStopTyping } =
+  const { sendMessage, sendImageMessage, emitTyping, emitStopTyping, error } =
     useMessages();
 
-  // ✅ CONFIGURABLE: Minimum keystrokes before showing typing indicator
+  // Configuration
   const TYPING_THRESHOLD = 15;
   const TYPING_TIMEOUT = 2000;
 
-  // ✅ FIX 1: Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (typingTimeoutRef.current) {
-        clearTimeout(typingTimeoutRef.current);
-      }
-      if (isTypingRef.current) {
-        emitStopTyping();
-      }
-      // Clean up image preview URL to prevent memory leaks
-      if (imagePreview) {
-        URL.revokeObjectURL(imagePreview);
-      }
-    };
-  }, [emitStopTyping, imagePreview]);
-
-  // ✅ FIX 2: Clear form when receiver changes (prevents stale data)
-  useEffect(() => {
-    setText("");
-    handleRemoveImage();
-    keystrokeCountRef.current = 0;
-  }, [receiverId]);
-
-  const handleImageSelect = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      // Validate file type
-      if (!file.type.startsWith("image/")) {
-        alert("Please select a valid image file");
-        return;
-      }
-
-      // Validate file size (max 5MB)
-      if (file.size > 5 * 1024 * 1024) {
-        alert("Image size must be less than 5MB");
-        return;
-      }
-
-      // ✅ Revoke old preview URL before creating new one
-      if (imagePreview) {
-        URL.revokeObjectURL(imagePreview);
-      }
-
-      setSelectedImage(file);
-      setImagePreview(URL.createObjectURL(file));
-    }
-  };
-
-  const handleRemoveImage = () => {
-    // ✅ Revoke object URL to free memory
+  // ✅ FIXED: Memoize handleRemoveImage
+  const handleRemoveImage = useCallback(() => {
+    // Revoke object URL to free memory
     if (imagePreview) {
       URL.revokeObjectURL(imagePreview);
     }
@@ -81,17 +35,76 @@ const MessageInput = ({ receiverId }) => {
     if (fileInputRef.current) {
       fileInputRef.current.value = "";
     }
+  }, [imagePreview]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+      }
+      if (isTypingRef.current) {
+        emitStopTyping();
+      }
+      // Clean up image preview URL
+      if (imagePreview) {
+        URL.revokeObjectURL(imagePreview);
+      }
+    };
+  }, [emitStopTyping, imagePreview]);
+
+  // Clear form when receiver changes
+  useEffect(() => {
+    setText("");
+    handleRemoveImage();
+    keystrokeCountRef.current = 0;
+
+    // Stop typing indicator
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+    if (isTypingRef.current) {
+      emitStopTyping();
+      isTypingRef.current = false;
+    }
+  }, [receiverId, handleRemoveImage, emitStopTyping]);
+
+  const handleImageSelect = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    // Validate file type
+    if (!FILE_UPLOAD.ALLOWED_TYPES.includes(file.type)) {
+      alert("Please select a valid image file (JPEG, PNG, GIF, or WebP)");
+      return;
+    }
+
+    // Validate file size
+    if (file.size > FILE_UPLOAD.MAX_SIZE) {
+      alert(
+        `Image size must be less than ${FILE_UPLOAD.MAX_SIZE / 1024 / 1024}MB`
+      );
+      return;
+    }
+
+    // Revoke old preview URL before creating new one
+    if (imagePreview) {
+      URL.revokeObjectURL(imagePreview);
+    }
+
+    setSelectedImage(file);
+    setImagePreview(URL.createObjectURL(file));
   };
 
   const handleTextChange = (e) => {
     const newText = e.target.value;
     setText(newText);
 
-    // ✅ Count keystrokes (non-whitespace characters)
+    // Count non-whitespace characters
     const nonWhitespaceCount = newText.replace(/\s/g, "").length;
     keystrokeCountRef.current = nonWhitespaceCount;
 
-    // ✅ ONLY emit typing if threshold is met
+    // Only emit typing if threshold is met
     if (keystrokeCountRef.current >= TYPING_THRESHOLD && !isTypingRef.current) {
       emitTyping();
       isTypingRef.current = true;
@@ -102,7 +115,7 @@ const MessageInput = ({ receiverId }) => {
       clearTimeout(typingTimeoutRef.current);
     }
 
-    // ✅ Send "stop typing" after inactivity (only if typing was started)
+    // Send "stop typing" after inactivity
     if (isTypingRef.current) {
       typingTimeoutRef.current = setTimeout(() => {
         emitStopTyping();
@@ -116,13 +129,11 @@ const MessageInput = ({ receiverId }) => {
     e.preventDefault();
 
     if (!text.trim() && !selectedImage) return;
-
-    // ✅ FIX 3: Prevent double submission
-    if (sending) return;
+    if (sending) return; // Prevent double submission
 
     setSending(true);
 
-    // ✅ Stop typing indicator immediately when sending
+    // Stop typing indicator immediately
     if (typingTimeoutRef.current) {
       clearTimeout(typingTimeoutRef.current);
     }
@@ -130,31 +141,22 @@ const MessageInput = ({ receiverId }) => {
       emitStopTyping();
       isTypingRef.current = false;
     }
-
-    // ✅ Reset keystroke counter
     keystrokeCountRef.current = 0;
 
     try {
+      // Send image if present
       if (selectedImage) {
-        await sendImageMessage(receiverId, selectedImage);
-        // ✅ FIX 4: Clear image IMMEDIATELY after successful send
+        await sendImageMessage(receiverId, selectedImage, text.trim());
         handleRemoveImage();
-      }
-
-      if (text.trim()) {
+        setText("");
+      } else if (text.trim()) {
+        // Send text only
         await sendMessage(receiverId, text.trim());
-      }
-
-      // ✅ FIX 5: Clear text after successful send
-      setText("");
-
-      // ✅ FIX 6: Use replaceState to prevent form resubmission on refresh
-      if (window.history.replaceState) {
-        window.history.replaceState(null, null, window.location.href);
+        setText("");
       }
     } catch (error) {
-      console.error("Send message error:", error);
-      alert("Failed to send message. Please try again.");
+      console.error("❌ Send message error:", error);
+      // Error is handled in context and displayed in UI
     } finally {
       setSending(false);
     }
@@ -162,6 +164,13 @@ const MessageInput = ({ receiverId }) => {
 
   return (
     <div className="border-t border-theme bg-theme">
+      {/* ✅ Error Display */}
+      {error && (
+        <div className="px-4 py-2 bg-red-50 border-b border-red-200">
+          <p className="text-sm text-red-600">{error}</p>
+        </div>
+      )}
+
       {/* Image Preview */}
       {imagePreview && (
         <div className="p-4 border-b border-theme">
@@ -172,8 +181,10 @@ const MessageInput = ({ receiverId }) => {
               className="h-20 w-20 object-cover rounded-lg"
             />
             <button
+              type="button"
               onClick={handleRemoveImage}
-              className="absolute -top-2 -right-2 bg-[var(--color-error)] text-white rounded-full w-6 h-6 flex items-center justify-center hover:opacity-90 transition-opacity"
+              className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-red-600 transition-colors"
+              aria-label="Remove image"
             >
               ×
             </button>
@@ -187,15 +198,17 @@ const MessageInput = ({ receiverId }) => {
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/*"
+          accept={FILE_UPLOAD.ALLOWED_TYPES.join(",")}
           onChange={handleImageSelect}
           className="hidden"
+          aria-label="Upload image"
         />
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
           className="flex-shrink-0 p-2 text-theme-secondary hover:text-primary hover:bg-[var(--color-primaryLight)] rounded-lg transition-colors"
           disabled={sending}
+          aria-label="Attach image"
         >
           <svg
             className="w-6 h-6"
@@ -228,14 +241,8 @@ const MessageInput = ({ receiverId }) => {
             className="w-full px-4 py-2 bg-theme text-theme border border-theme rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent resize-none placeholder:text-theme-tertiary"
             disabled={sending}
             style={{ maxHeight: "120px" }}
+            aria-label="Message input"
           />
-
-          {/* ✅ Visual feedback showing threshold progress */}
-          {text.length > 0 && keystrokeCountRef.current < TYPING_THRESHOLD && (
-            <div className="absolute -top-6 right-2 text-xs text-theme-tertiary">
-              {keystrokeCountRef.current}/{TYPING_THRESHOLD}
-            </div>
-          )}
         </div>
 
         {/* Send Button */}
@@ -243,6 +250,7 @@ const MessageInput = ({ receiverId }) => {
           type="submit"
           disabled={(!text.trim() && !selectedImage) || sending}
           className="flex-shrink-0 p-2 bg-primary text-white rounded-lg hover:bg-primary-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          aria-label="Send message"
         >
           {sending ? (
             <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />

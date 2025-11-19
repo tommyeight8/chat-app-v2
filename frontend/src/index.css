@@ -13,6 +13,7 @@ body {
 
 /* CSS Variables for theming */
 :root {
+  --color-scrollThumb: rgba(0, 0, 0, 0.25);
   /* Default theme (will be overridden by ThemeContext) */
   --color-bg: #ffffff;
   --color-bgSecondary: #f7f7f7;
@@ -130,4 +131,57 @@ body {
   .bg-offline {
     background-color: var(--color-offline);
   }
+}
+
+/* Hide scrollbar but keep scrolling */
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.hide-scrollbar {
+  -ms-overflow-style: none; /* IE & Edge */
+  scrollbar-width: none; /* Firefox */
+}
+/* THIN SCROLLBAR */
+.thin-scrollbar {
+  scrollbar-width: thin; /* Firefox */
+  scrollbar-color: var(--color-scrollThumb) transparent;
+}
+
+/* Chrome / Safari / Edge */
+.thin-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.thin-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.thin-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--color-scrollThumb);
+  border-radius: 10px;
+}
+
+/* ===== Scrollbar (Theme-Aware) ===== */
+
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-bgSecondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-primary);
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) var(--color-bgSecondary);
 }

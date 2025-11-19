@@ -12,7 +12,7 @@ const Messages = () => {
   // ✅ Sidebar resize state
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const saved = localStorage.getItem("chatSidebarWidth");
-    return saved ? parseInt(saved) : 384;
+    return saved ? parseInt(saved) : 300;
   });
   const [isResizing, setIsResizing] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
@@ -72,9 +72,9 @@ const Messages = () => {
   };
 
   const expandToDefault = () => {
-    setSidebarWidth(384);
+    setSidebarWidth(300);
     setIsCollapsed(false);
-    localStorage.setItem("chatSidebarWidth", "384");
+    localStorage.setItem("chatSidebarWidth", "300");
   };
 
   const currentWidth = isCollapsed ? COLLAPSED_WIDTH : sidebarWidth;
@@ -202,7 +202,7 @@ const Messages = () => {
             </button>
 
             {/* Reset to Default Width */}
-            {sidebarWidth !== 384 && (
+            {sidebarWidth !== 300 && (
               <button
                 onClick={expandToDefault}
                 className="p-2 text-theme-secondary hover:text-theme hover:bg-sidebar-hover rounded transition-colors"

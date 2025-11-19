@@ -78,18 +78,48 @@ export const initializeSocket = (httpServer) => {
   // AUTH MIDDLEWARE
   // ==========================
   io.use((socket, next) => {
+    console.log("\n=== SOCKET AUTH ATTEMPT ===");
+    console.log("Time:", new Date().toISOString());
+    console.log("Socket ID:", socket.id);
+
     try {
       const cookieHeader = socket.handshake.headers.cookie;
-      if (!cookieHeader) return next(new Error("Authentication required"));
+      console.log("Cookie header exists:", !!cookieHeader);
+      console.log("Cookie header:", cookieHeader);
+
+      if (!cookieHeader) {
+        console.error("❌ REJECTED: No cookie header");
+        return next(new Error("Authentication required"));
+      }
 
       const cookies = cookie.parse(cookieHeader);
+      console.log("Parsed cookies:", Object.keys(cookies));
+
       const token = cookies.jwt || cookies.token;
-      if (!token) return next(new Error("Authentication token missing"));
+      console.log("JWT token exists:", !!token);
+      console.log(
+        "JWT token (first 20 chars):",
+        token ? token.substring(0, 20) + "..." : "N/A"
+      );
+
+      if (!token) {
+        console.error("❌ REJECTED: No JWT in cookies");
+        console.log("Available cookie keys:", Object.keys(cookies));
+        return next(new Error("Authentication token missing"));
+      }
 
       const decoded = jwt.verify(token, ENV.JWT_SECRET);
-      const userId = decoded.userId || decoded.id || decoded._id;
+      console.log("Token decoded successfully");
+      console.log("Decoded payload keys:", Object.keys(decoded));
 
-      if (!userId) return next(new Error("Invalid token payload"));
+      const userId = decoded.userId || decoded.id || decoded._id;
+      console.log("Extracted userId:", userId);
+
+      if (!userId) {
+        console.error("❌ REJECTED: No userId in token");
+        console.log("Full decoded token:", decoded);
+        return next(new Error("Invalid token payload"));
+      }
 
       socket.userId = userId;
 
@@ -97,12 +127,21 @@ export const initializeSocket = (httpServer) => {
       const existing = [...io.sockets.sockets.values()].filter(
         (s) => s.userId === userId
       );
-      if (existing.length >= 5)
-        return next(new Error("Too many active connections"));
+      console.log("Existing connections for user:", existing.length);
 
+      if (existing.length >= 5) {
+        console.error("❌ REJECTED: Too many connections");
+        return next(new Error("Too many active connections"));
+      }
+
+      console.log(`✅ ACCEPTED: User ${userId} authenticated`);
+      console.log("===========================\n");
       next();
     } catch (err) {
-      console.error("❌ Socket auth error:", err);
+      console.error("❌ REJECTED: Auth error");
+      console.error("Error:", err.message);
+      console.error("Stack:", err.stack);
+      console.log("===========================\n");
       return next(new Error("Authentication failed"));
     }
   });

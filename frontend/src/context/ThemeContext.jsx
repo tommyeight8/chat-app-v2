@@ -8,6 +8,8 @@ export const THEMES = {
   light: {
     name: "Light",
     colors: {
+      scrollThumb: "#d1d1d1",
+      scrollTrack: "#f2f2f2",
       // Background
       bg: "#FFFFFF",
       bgSecondary: "#F7F7F7",
@@ -57,6 +59,8 @@ export const THEMES = {
   darkCyan: {
     name: "Dark Cyan",
     colors: {
+      scrollThumb: "#2F3B3F",
+      scrollTrack: "#1D2224",
       // Background
       bg: "#1B1C1E",
       bgSecondary: "#222325",
@@ -106,6 +110,8 @@ export const THEMES = {
   ayuDarkCyan: {
     name: "Ayu Dark Cyan",
     colors: {
+      scrollThumb: "#233039",
+      scrollTrack: "#0F141B",
       // Background (Dark neutrals)
       bg: "#0A0E14",
       bgSecondary: "#0D1016",
