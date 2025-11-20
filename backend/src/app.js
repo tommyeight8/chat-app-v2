@@ -1,3 +1,4 @@
+// backend/server.js — FINAL CLEANED VERSION
 import express from "express";
 import { createServer } from "http";
 import cookieParser from "cookie-parser";
@@ -8,6 +9,8 @@ import cors from "cors";
 import compression from "compression";
 import morgan from "morgan";
 import rateLimit from "express-rate-limit";
+import { fileURLToPath } from "url";
+
 import authRoutes from "./routes/auth.js";
 import messageRoutes from "./routes/message.js";
 import { connectDB } from "./lib/db.js";
@@ -16,25 +19,47 @@ import { initializeSocket } from "./socket/socketHandler.js";
 
 dotenv.config();
 
+// ---------------------------------------------------------
+// Correct dirname for ESM
+// ---------------------------------------------------------
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 const app = express();
 const httpServer = createServer(app);
-const __dirname = path.resolve();
 const PORT = ENV.PORT || 3000;
 
+// ---------------------------------------------------------
+// SECURITY: Helmet CSP (Cloudflare, GCS, Cloudinary, SPA, sockets)
+// ---------------------------------------------------------
 app.use(
   helmet({
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
-        scriptSrc: ["'self'"],
-        imgSrc: ["'self'", "data:", "https:", "blob:"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "https:"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https:"],
+        imgSrc: [
+          "'self'",
+          "data:",
+          "blob:",
+          "https:",
+          "*.googleapis.com",
+          "*.cloudflare.com",
+          "res.cloudinary.com",
+        ],
+        connectSrc: ["'self'", "https:", "wss:", ENV.FRONTEND_URL],
+        fontSrc: ["'self'", "https:", "data:"],
+        mediaSrc: ["'self'", "blob:", "https:"],
       },
     },
     crossOriginEmbedderPolicy: false,
   })
 );
 
+// ---------------------------------------------------------
+// CORS
+// ---------------------------------------------------------
 app.use(
   cors({
     origin:
@@ -42,100 +67,119 @@ app.use(
         ? "http://localhost:5173"
         : ENV.FRONTEND_URL,
     credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   })
 );
 
+// ---------------------------------------------------------
+// Utility Middleware
+// ---------------------------------------------------------
 app.use(compression());
-
-if (ENV.NODE_ENV === "development") {
-  app.use(morgan("dev"));
-} else {
-  app.use(morgan("combined"));
-}
-
-app.set("trust proxy", 1);
-
+app.use(morgan(ENV.NODE_ENV === "development" ? "dev" : "combined"));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
 
+// Required if behind proxy (Sevalla, Cloudflare, Nginx)
+app.set("trust proxy", 1);
+
+// ---------------------------------------------------------
+// Rate Limiting
+// ---------------------------------------------------------
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 1000,
-  message: "Too many requests from this IP, please try again later",
-  standardHeaders: true,
-  legacyHeaders: false,
+  max: ENV.NODE_ENV === "development" ? 1000 : 500,
 });
-
 app.use(globalLimiter);
 
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 100,
-  message: "Too many API requests, please slow down",
 });
 
-initializeSocket(httpServer);
+// ---------------------------------------------------------
+// SOCKET.IO
+// ---------------------------------------------------------
+const io = initializeSocket(httpServer);
+app.set("io", io);
 
+// ---------------------------------------------------------
+// HEALTH CHECK
+// ---------------------------------------------------------
 app.get("/health", (req, res) => {
-  res.status(200).json({
+  res.json({
     status: "ok",
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
   });
 });
 
+// ---------------------------------------------------------
+// API ROUTES
+// ---------------------------------------------------------
 app.use("/api/auth", apiLimiter, authRoutes);
 app.use("/api/messages", apiLimiter, messageRoutes);
 
+// ---------------------------------------------------------
+// SERVE FRONTEND (PRODUCTION SPA MODE)
+// ---------------------------------------------------------
 if (ENV.NODE_ENV === "production") {
   const frontendPath = path.join(__dirname, "../frontend/dist");
-  app.use(express.static(frontendPath));
+
+  app.use(
+    express.static(frontendPath, {
+      maxAge: "1d",
+      etag: true,
+    })
+  );
+
+  // SPA route handling — fallback to index.html
   app.get("*", (req, res) => {
+    if (req.path.startsWith("/api") || req.path.startsWith("/socket.io")) {
+      return res
+        .status(404)
+        .json({ success: false, message: "API endpoint not found" });
+    }
     res.sendFile(path.join(frontendPath, "index.html"));
   });
 }
 
+// ---------------------------------------------------------
+// GLOBAL ERROR HANDLER
+// ---------------------------------------------------------
 app.use((err, req, res, next) => {
-  const message =
-    ENV.NODE_ENV === "production" ? "Internal server error" : err.message;
+  console.error("❌ ERROR:", err);
+
   res.status(err.status || 500).json({
     success: false,
-    message,
+    message:
+      ENV.NODE_ENV === "production" ? "Internal server error" : err.message,
+    ...(ENV.NODE_ENV === "development" && { stack: err.stack }),
   });
 });
 
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    message: "Route not found",
-  });
-});
-
-const gracefulShutdown = async (signal) => {
-  httpServer.close(async () => {
-    try {
-      await connectDB().then((conn) => conn.connection.close());
-    } catch (err) {}
-    process.exit(0);
-  });
-
-  setTimeout(() => {
-    process.exit(1);
-  }, 30000);
-};
-
-process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
-process.on("SIGINT", () => gracefulShutdown("SIGINT"));
-
-httpServer.listen(PORT, "0.0.0.0", () => {
+// ---------------------------------------------------------
+// START SERVER
+// ---------------------------------------------------------
+httpServer.listen(PORT, () => {
+  console.log("\n🚀 ================================");
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log("🔒 Helmet security enabled");
+  console.log("🚦 Rate limiting active");
+  console.log("🗜️ Compression enabled");
+  console.log("🔌 Socket.IO ready");
+  console.log("📦 SPA frontend serving enabled");
+  console.log("🚀 ================================\n");
   connectDB();
 });
 
-process.on("unhandledRejection", (err) => {
-  gracefulShutdown("UNHANDLED_REJECTION");
-});
-
-process.on("uncaughtException", (err) => {
-  gracefulShutdown("UNCAUGHT_EXCEPTION");
+// ---------------------------------------------------------
+// GRACEFUL SHUTDOWN
+// ---------------------------------------------------------
+process.on("SIGTERM", () => {
+  console.log("👋 SIGTERM received. Closing...");
+  httpServer.close(() => {
+    console.log("✅ Server closed");
+    process.exit(0);
+  });
 });
