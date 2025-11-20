@@ -1,4 +1,3 @@
-// backend/server.js
 import express from "express";
 import { createServer } from "http";
 import cookieParser from "cookie-parser";
@@ -9,8 +8,6 @@ import cors from "cors";
 import compression from "compression";
 import morgan from "morgan";
 import rateLimit from "express-rate-limit";
-import { fileURLToPath } from "url";
-
 import authRoutes from "./routes/auth.js";
 import messageRoutes from "./routes/message.js";
 import { connectDB } from "./lib/db.js";
@@ -19,46 +16,25 @@ import { initializeSocket } from "./socket/socketHandler.js";
 
 dotenv.config();
 
-// --- Fix dirname for ESM ---
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 const app = express();
 const httpServer = createServer(app);
-
+const __dirname = path.resolve();
 const PORT = ENV.PORT || 3000;
 
-// ----------------------------
-//  SECURITY MIDDLEWARE
-// ----------------------------
 app.use(
   helmet({
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'", "'unsafe-inline'", "https:"],
-        styleSrc: ["'self'", "'unsafe-inline'", "https:"],
-        imgSrc: [
-          "'self'",
-          "data:",
-          "blob:",
-          "https:",
-          "*.googleapis.com",
-          "*.cloudflare.com",
-        ],
-        connectSrc: [
-          "'self'",
-          "https:",
-          "wss:",
-          ENV.FRONTEND_URL, // socket.io + api
-        ],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'"],
+        imgSrc: ["'self'", "data:", "https:", "blob:"],
       },
     },
     crossOriginEmbedderPolicy: false,
   })
 );
 
-// CORS (Sevalla uses HTTPS domain)
 app.use(
   cors({
     origin:
@@ -69,72 +45,97 @@ app.use(
   })
 );
 
-// Compression, logging, limits
 app.use(compression());
-app.use(morgan(ENV.NODE_ENV === "development" ? "dev" : "combined"));
+
+if (ENV.NODE_ENV === "development") {
+  app.use(morgan("dev"));
+} else {
+  app.use(morgan("combined"));
+}
+
+app.set("trust proxy", 1);
+
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
 
-// Rate limiting
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 1000,
+  message: "Too many requests from this IP, please try again later",
+  standardHeaders: true,
+  legacyHeaders: false,
 });
+
 app.use(globalLimiter);
 
-// Per-API limiter
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 100,
+  message: "Too many API requests, please slow down",
 });
 
-// Socket.IO
 initializeSocket(httpServer);
 
-// Health check
-app.get("/health", (req, res) => res.json({ ok: true }));
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+  });
+});
 
-// API
 app.use("/api/auth", apiLimiter, authRoutes);
 app.use("/api/messages", apiLimiter, messageRoutes);
 
-// ----------------------------
-//  SERVE FRONTEND (Sevalla)
-// ----------------------------
 if (ENV.NODE_ENV === "production") {
   const frontendPath = path.join(__dirname, "../frontend/dist");
-  console.log("📦 Serving frontend:", frontendPath);
-
   app.use(express.static(frontendPath));
-
-  // React Router SPA handler
   app.get("*", (req, res) => {
     res.sendFile(path.join(frontendPath, "index.html"));
   });
 }
 
-// ----------------------------
-//  GLOBAL ERROR HANDLER
-// ----------------------------
 app.use((err, req, res, next) => {
-  console.error("❌ ERROR:", err);
+  const message =
+    ENV.NODE_ENV === "production" ? "Internal server error" : err.message;
   res.status(err.status || 500).json({
     success: false,
-    message:
-      ENV.NODE_ENV === "production" ? "Internal server error" : err.message,
+    message,
   });
 });
 
-// 404 fallback
-app.use((req, res) =>
-  res.status(404).json({ success: false, message: "Route not found" })
-);
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: "Route not found",
+  });
+});
 
-// ----------------------------
-//  START SERVER + DB
-// ----------------------------
-httpServer.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+const gracefulShutdown = async (signal) => {
+  httpServer.close(async () => {
+    try {
+      await connectDB().then((conn) => conn.connection.close());
+    } catch (err) {}
+    process.exit(0);
+  });
+
+  setTimeout(() => {
+    process.exit(1);
+  }, 30000);
+};
+
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+
+httpServer.listen(PORT, "0.0.0.0", () => {
   connectDB();
+});
+
+process.on("unhandledRejection", (err) => {
+  gracefulShutdown("UNHANDLED_REJECTION");
+});
+
+process.on("uncaughtException", (err) => {
+  gracefulShutdown("UNCAUGHT_EXCEPTION");
 });
