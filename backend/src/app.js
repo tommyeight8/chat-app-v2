@@ -1,4 +1,4 @@
-// backend/server.js — FINAL CLEANED VERSION
+// backend/server.js (CORRECTED)
 import express from "express";
 import { createServer } from "http";
 import cookieParser from "cookie-parser";
@@ -19,9 +19,6 @@ import { initializeSocket } from "./socket/socketHandler.js";
 
 dotenv.config();
 
-// ---------------------------------------------------------
-// Correct dirname for ESM
-// ---------------------------------------------------------
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -29,9 +26,9 @@ const app = express();
 const httpServer = createServer(app);
 const PORT = ENV.PORT || 3000;
 
-// ---------------------------------------------------------
-// SECURITY: Helmet CSP (Cloudflare, GCS, Cloudinary, SPA, sockets)
-// ---------------------------------------------------------
+// ----------------------------
+//  SECURITY MIDDLEWARE
+// ----------------------------
 app.use(
   helmet({
     contentSecurityPolicy: {
@@ -46,20 +43,18 @@ app.use(
           "https:",
           "*.googleapis.com",
           "*.cloudflare.com",
-          "res.cloudinary.com",
+          "res.cloudinary.com", // ✅ Add Cloudinary explicitly
         ],
         connectSrc: ["'self'", "https:", "wss:", ENV.FRONTEND_URL],
-        fontSrc: ["'self'", "https:", "data:"],
-        mediaSrc: ["'self'", "blob:", "https:"],
+        fontSrc: ["'self'", "https:", "data:"], // ✅ Add fonts
+        mediaSrc: ["'self'", "blob:", "https:"], // ✅ Add media
       },
     },
     crossOriginEmbedderPolicy: false,
   })
 );
 
-// ---------------------------------------------------------
 // CORS
-// ---------------------------------------------------------
 app.use(
   cors({
     origin:
@@ -67,45 +62,46 @@ app.use(
         ? "http://localhost:5173"
         : ENV.FRONTEND_URL,
     credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], // ✅ Explicit methods
   })
 );
 
-// ---------------------------------------------------------
-// Utility Middleware
-// ---------------------------------------------------------
+// Compression, logging, limits
 app.use(compression());
 app.use(morgan(ENV.NODE_ENV === "development" ? "dev" : "combined"));
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cookieParser());
 
-// Required if behind proxy (Sevalla, Cloudflare, Nginx)
-app.set("trust proxy", 1);
-
-// ---------------------------------------------------------
-// Rate Limiting
-// ---------------------------------------------------------
+// Rate limiting
 const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: ENV.NODE_ENV === "development" ? 1000 : 500,
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: ENV.NODE_ENV === "development" ? 1000 : 500, // ✅ Lower in prod
+  message: "Too many requests from this IP, please try again later",
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 app.use(globalLimiter);
 
 const apiLimiter = rateLimit({
-  windowMs: 60 * 1000,
+  windowMs: 60 * 1000, // 1 minute
   max: 100,
+  message: "Too many API requests, please slow down",
 });
 
-// ---------------------------------------------------------
-// SOCKET.IO
-// ---------------------------------------------------------
+// ----------------------------
+//  SOCKET.IO INITIALIZATION
+// ----------------------------
 const io = initializeSocket(httpServer);
-app.set("io", io);
+app.set("io", io); // ✅ Make io accessible in routes
 
-// ---------------------------------------------------------
-// HEALTH CHECK
-// ---------------------------------------------------------
+console.log("✅ Socket.io initialized");
+
+// ----------------------------
+//  ROUTES
+// ----------------------------
+
+// Health check (no rate limit)
 app.get("/health", (req, res) => {
   res.json({
     status: "ok",
@@ -114,42 +110,55 @@ app.get("/health", (req, res) => {
   });
 });
 
-// ---------------------------------------------------------
-// API ROUTES
-// ---------------------------------------------------------
+// API routes
 app.use("/api/auth", apiLimiter, authRoutes);
 app.use("/api/messages", apiLimiter, messageRoutes);
 
-// ---------------------------------------------------------
-// SERVE FRONTEND (PRODUCTION SPA MODE)
-// ---------------------------------------------------------
+// ----------------------------
+//  SERVE FRONTEND (Production)
+// ----------------------------
 if (ENV.NODE_ENV === "production") {
-  const frontendPath = path.join(__dirname, "../frontend/dist");
+  const frontendPath = path.join(__dirname, "../../frontend/dist");
 
+  console.log("📦 Serving frontend from:", frontendPath);
+
+  // Serve static files
   app.use(
     express.static(frontendPath, {
-      maxAge: "1d",
+      maxAge: "1d", // ✅ Cache static assets
       etag: true,
     })
   );
 
-  // SPA route handling — fallback to index.html
+  // ✅ FIXED: Handle SPA routing but exclude API routes
   app.get("*", (req, res) => {
+    // Don't serve index.html for API routes
     if (req.path.startsWith("/api") || req.path.startsWith("/socket.io")) {
-      return res
-        .status(404)
-        .json({ success: false, message: "API endpoint not found" });
+      return res.status(404).json({
+        success: false,
+        message: "API endpoint not found",
+      });
     }
+
+    // Serve React app for all other routes
     res.sendFile(path.join(frontendPath, "index.html"));
   });
 }
 
-// ---------------------------------------------------------
-// GLOBAL ERROR HANDLER
-// ---------------------------------------------------------
-app.use((err, req, res, next) => {
-  console.error("❌ ERROR:", err);
+// ----------------------------
+//  ERROR HANDLERS
+// ----------------------------
 
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error("❌ ERROR:", {
+    message: err.message,
+    stack: ENV.NODE_ENV === "development" ? err.stack : undefined,
+    path: req.path,
+    method: req.method,
+  });
+
+  // Don't leak error details in production
   res.status(err.status || 500).json({
     success: false,
     message:
@@ -158,26 +167,26 @@ app.use((err, req, res, next) => {
   });
 });
 
-// ---------------------------------------------------------
-// START SERVER
-// ---------------------------------------------------------
+// ✅ REMOVED: Separate 404 handler (handled in wildcard above)
+
+// ----------------------------
+//  START SERVER
+// ----------------------------
 httpServer.listen(PORT, () => {
   console.log("\n🚀 ================================");
   console.log(`🚀 Server running on port ${PORT}`);
-  console.log("🔒 Helmet security enabled");
-  console.log("🚦 Rate limiting active");
-  console.log("🗜️ Compression enabled");
-  console.log("🔌 Socket.IO ready");
-  console.log("📦 SPA frontend serving enabled");
+  console.log(`🔒 Security: Helmet enabled`);
+  console.log(`🚦 Rate limiting: Active`);
+  console.log(`🗜️ Compression: Enabled`);
+  console.log(`🚀 Socket.io: Ready`);
   console.log("🚀 ================================\n");
+
   connectDB();
 });
 
-// ---------------------------------------------------------
-// GRACEFUL SHUTDOWN
-// ---------------------------------------------------------
+// ✅ Graceful shutdown
 process.on("SIGTERM", () => {
-  console.log("👋 SIGTERM received. Closing...");
+  console.log("👋 SIGTERM received, closing server gracefully...");
   httpServer.close(() => {
     console.log("✅ Server closed");
     process.exit(0);
